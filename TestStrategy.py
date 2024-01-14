@@ -91,130 +91,20 @@ class TestStrategy(IStrategy):
 
     # Strategy Constant
     periods = np.array([0,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200])
-    
-    def minimax(self,volume,x,p,min,max):
-        volume_array = volume.to_numpy()
-        volume_array = volume_array[:x.name]
-
-        if(len(volume_array) < p):
-            return 0
-    
-        hi = np.nan_to_num(np.max(volume_array[-p:]))
-        lo = np.nan_to_num(np.min(volume_array[-p:]))
-
-        return (max - min) * (volume_array[len(volume_array)-1] - lo)/(hi - lo) + min
-    
-    def get_class_label(self,x,close):
-        close_array = close.to_numpy()
-        close_array = close_array[:x.name]
-
-        if(len(close_array) < 1):
-            return 1
-        
-        current_value =  close_array[len(close_array) - 1] 
-        previous_value = close_array[len(close_array) - 2]
-        
-        if(previous_value > current_value):
-            return 1
-        elif(previous_value < current_value):
-            return -1
-        else:
-            return 1
-    
-    def get_long_or_short_prediction(self,index,predicte_list):
-        predicte_array = predicte_list.to_numpy()
-        predicte_array = predicte_array[:index.name]
-
-        if(len(predicte_array) < 1):
-            return 0
-        
-        current_value =  predicte_array[len(predicte_array) - 1] 
-        previous_value = predicte_array[len(predicte_array) - 2]
-        return current_value - previous_value
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
     
         (startPrice,endPrice,startAtBar),(upperStartPrice,upperEndPrice),(lowerStartPrice,lowerEndPrice) = self.adaptiveTrendFinder(dataframe)
 
         # KNN Strategy
-        BaseK = 252
-        LongWindow = 28
-        ShortWindow = 14
-
-        BUY = 1
-        SELL = -1
-        CLEAR = 0
-
-        k = math.floor(math.sqrt(BaseK))
-
-        # Training data, normalized to the range of [0,...,100]
-        feature1 = []
-        feature2 = []
-        directions = []
-        predictions = []
-        prediction = 0
-        bars = []
-
-        # Signal
-        signal = CLEAR
-
-        # 3paris of predictor indicators , long,short each
-        dataframe['rs'] = ta.RSI(dataframe['close'],timeperiod=LongWindow)
-        dataframe['cs'] = ta.CCI(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=LongWindow)
-        dataframe['os'] = ta.ROC(dataframe['close'],timeperiod=LongWindow)
-        dataframe['vs'] = dataframe.apply((lambda x: self.minimax(dataframe['volume'],x,LongWindow,0,99)),axis=1)
-
-        dataframe['rf'] = ta.RSI(dataframe['close'],timeperiod=ShortWindow)
-        dataframe['cf'] = ta.CCI(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=ShortWindow)
-        dataframe['of'] = ta.ROC(dataframe['close'],timeperiod=ShortWindow)
-        dataframe['vf'] = dataframe.apply((lambda x: self.minimax(dataframe['volume'],x,ShortWindow,0,99)),axis=1)
-
-        dataframe['f1'] = dataframe.loc[:,['rs','cs','os','vs']].mean(axis=1)
-        dataframe['f2'] = dataframe.loc[:,['rf','cf','of','vf']].mean(axis=1)
-
-        # Classification data, what happens on the next bar
-        dataframe['class_label'] = dataframe.apply((lambda x: self.get_class_label(x,dataframe['close'])),axis=1)
-
-        # Core Logic
-        size = len(dataframe)
-        maxdist = -999.0
-
-        # Loop through the training arrays, getting distances and corresponding directions
-        X = dataframe.loc[:,['f1','f2']]
-        y = dataframe.loc[:,['class_label']]
-        X = np.array(X)
-        y = np.ravel(y)
-
-        # Split the data into training and testing sets
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
-
-        # Create a KNN classifier with k=1
-            
-        knn_classifier = KNeighborsClassifier(n_neighbors=252,weights="distance",leaf_size=100)
-        rf_classifier = RandomForestClassifier(n_estimators=100, random_state=42,min_samples_leaf=100,oob_score=True)
-
-        # Create a VotingClassifier with soft voting
-        voting_classifier = VotingClassifier(estimators=[
-            ('knn', knn_classifier),
-            ('rf', rf_classifier)
-        ], voting='hard')
-
-        # Train the classifier
-        voting_classifier.fit(X_train, y_train)
-
-        # Make predictions on the test set
-        y_pred = voting_classifier.predict(X_test)
-        dataframe['predicted_label'] = voting_classifier.predict(X)
-
-        dataframe['long_or_short'] = dataframe.apply((lambda x : self.get_long_or_short_prediction(x,dataframe['predicted_label'])),axis=1)
-
+        dataframe = self.trainModelML(dataframe)
 
         # RSI
         dataframe['rsi'] = ta.RSI(dataframe)
-        print("=======================")
-        print(dataframe.loc[:,['long_or_short']])
-        print(datetime.now(timezone.utc))
-        print("=====================")
+        # print("=======================")
+        # print(dataframe.loc[:,['long_or_short']])
+        # print(datetime.now(timezone.utc))
+        # print("=====================")
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -428,5 +318,107 @@ class TestStrategy(IStrategy):
         divisor  = sumDxx * sumDyy
         pearsonR = np.nan_to_num(sumDyx / math.sqrt(divisor))
         return unStdDev,pearsonR,slope,intercept
+    
+    def minimax(self,volume,x,p,min,max):
+        volume_array = volume.to_numpy()
+        volume_array = volume_array[:x.name]
 
+        if(len(volume_array) < p):
+            return 0
+    
+        hi = np.nan_to_num(np.max(volume_array[-p:]))
+        lo = np.nan_to_num(np.min(volume_array[-p:]))
 
+        return (max - min) * (volume_array[len(volume_array)-1] - lo)/(hi - lo) + min
+    
+    def get_class_label(self,x,close):
+        close_array = close.to_numpy()
+        close_array = close_array[:x.name]
+
+        if(len(close_array) < 1):
+            return 1
+        
+        current_value =  close_array[len(close_array) - 1] 
+        previous_value = close_array[len(close_array) - 2]
+        
+        if(previous_value > current_value):
+            return 1
+        elif(previous_value < current_value):
+            return -1
+        else:
+            return 1
+    
+    def get_long_or_short_prediction(self,index,predicte_list):
+        predicte_array = predicte_list.to_numpy()
+        predicte_array = predicte_array[:index.name]
+
+        if(len(predicte_array) < 1):
+            return 0
+        
+        current_value =  predicte_array[len(predicte_array) - 1] 
+        previous_value = predicte_array[len(predicte_array) - 2]
+        return current_value - previous_value
+    
+    def trainModelML(self,dataframe):
+            BaseK = 252
+            LongWindow = 28
+            ShortWindow = 14
+
+            # 3paris of predictor indicators , long,short each
+            dataframe['rs'] = ta.RSI(dataframe['close'],timeperiod=LongWindow)
+            dataframe['cs'] = ta.CCI(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=LongWindow)
+            dataframe['os'] = ta.ROC(dataframe['close'],timeperiod=LongWindow)
+            dataframe['vs'] = dataframe.apply((lambda x: self.minimax(dataframe['volume'],x,LongWindow,0,99)),axis=1)
+
+            dataframe['rf'] = ta.RSI(dataframe['close'],timeperiod=ShortWindow)
+            dataframe['cf'] = ta.CCI(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=ShortWindow)
+            dataframe['of'] = ta.ROC(dataframe['close'],timeperiod=ShortWindow)
+            dataframe['vf'] = dataframe.apply((lambda x: self.minimax(dataframe['volume'],x,ShortWindow,0,99)),axis=1)
+
+            dataframe['f1'] = dataframe.loc[:,['rs','cs','os','vs']].mean(axis=1)
+            dataframe['f2'] = dataframe.loc[:,['rf','cf','of','vf']].mean(axis=1)
+
+            # Classification data, what happens on the next bar
+
+            dataframe['class_label'] = dataframe.apply((lambda x: self.get_class_label(x,dataframe['close'])),axis=1)
+
+            # Loop Through Training Arrays and get distances
+            dataframe['predicted_value'] = dataframe.apply((lambda x : self.getPredictedValueFromKNN(x,dataframe)),axis=1)
+
+            print("====================")
+            print(dataframe.loc[:,['predicted_value','close']])
+            print("===================")
+            return dataframe
+    
+    def getPredictedValueFromKNN(self,x,dataframe):
+        maxdist = -999.0
+        k = math.floor(math.sqrt(252))
+        predictions = []
+
+        feature_array_1 = dataframe['f1'].to_numpy()
+        feature_array_1 = feature_array_1[:x.name]
+
+        feature_array_2 = dataframe['f2'].to_numpy()
+        feature_array_2 = feature_array_2[:x.name]
+
+        direction_array = dataframe['class_label'].to_numpy()
+        direction_array = direction_array[:x.name]
+
+        if(len(feature_array_1) < 1):
+            return 0
+        elif(len(feature_array_2) < 1):
+            return 0
+        
+        current_feature1 =  feature_array_1[len(feature_array_1) - 1] 
+        current_feature2 =  feature_array_2[len(feature_array_2) - 1] 
+        size = len(feature_array_1)
+        for i in range(0,size-1):
+            d = math.sqrt(math.pow(current_feature1 - feature_array_1[i], 2) + math.pow(current_feature2 - feature_array_2[i], 2))
+            if(d > maxdist):
+                maxdist = d
+                if(len(predictions) >= k):
+                    predictions.pop()
+                predictions.append(direction_array[i])
+
+        prediction = np.sum(predictions)
+        return prediction
