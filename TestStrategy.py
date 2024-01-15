@@ -25,19 +25,19 @@ class TestStrategy(IStrategy):
     INTERFACE_VERSION = 3
 
     # Can this strategy go short?
-    can_short: bool = False
+    can_short: bool = True
 
     # Minimal ROI designed for the strategy.
     # This attribute will be overridden if the config file contains "minimal_roi".
-    minimal_roi = {
-        "60": 0.01,
-        "30": 0.02,
-        "0": 0.04
-    }
+    # minimal_roi = {
+    #     "60": 0.01,
+    #     "30": 0.02,
+    #     "0": 0.04
+    # }
 
     # Optimal stoploss designed for the strategy.
     # This attribute will be overridden if the config file contains "stoploss".
-    stoploss = -0.10
+    stoploss = -0.6
 
     # Trailing stoploss
     trailing_stop = False
@@ -46,10 +46,10 @@ class TestStrategy(IStrategy):
     # trailing_stop_positive_offset = 0.0  # Disabled / not configured
 
     # Optimal timeframe for the strategy.
-    timeframe = '1m'
+    timeframe = '5m'
 
     # Run "populate_indicators()" only for new candle.
-    process_only_new_candles = False
+    process_only_new_candles = True
 
     # These values can be overridden in the config.
     use_exit_signal = True
@@ -94,35 +94,63 @@ class TestStrategy(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
     
-        (startPrice,endPrice,startAtBar),(upperStartPrice,upperEndPrice),(lowerStartPrice,lowerEndPrice) = self.adaptiveTrendFinder(dataframe)
+        # For Backtesting
+        dataframe = self.adaptiveTrendFinder_2(dataframe)
+        dataframe['trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
+        dataframe['trend_strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
 
+
+        # For Live Trading
+        # trend_direction,detectedPeriod,highestPearsonR = self.adaptiveTrendFinder(dataframe)
+        # dataframe['trend'] = trend_direction
+        # dataframe['trend_strength'] = highestPearsonR
         # KNN Strategy
         dataframe = self.trainModelML(dataframe)
 
-        # RSI
-        dataframe['rsi'] = ta.RSI(dataframe)
         # print("=======================")
-        # print(dataframe.loc[:,['long_or_short']])
-        # print(datetime.now(timezone.utc))
-        # print("=====================")
+        print(dataframe.loc[:,['trend','trend_strength']])
+        print(datetime.now(timezone.utc))
+        print("=====================")
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # Signal: RSI crosses above 30
-                (dataframe['rsi'] > 90)
+                (dataframe['trend'] > 0)
+                &
+                (dataframe['trend_strength'] >= 0.90) 
+                &
+                (dataframe['predicted_value'] > 0)
             ),
             'enter_long'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe['trend'] < 0) 
+                &
+                (dataframe['trend_strength'] >= 0.90)
+                &
+                (dataframe['predicted_value'] < 0)
+            ),
+            'enter_short'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # Signal: RSI crosses above 30
-                (dataframe['rsi'] > 90)
+                (dataframe['trend'] < 0) 
+                &
+                (dataframe['trend_strength'] >= 0.90)
             ),
             'exit_long'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe['trend'] > 0)
+                &
+                (dataframe['trend_strength'] >= 0.90)
+            ),
+            'exit_short'] = 1
         return dataframe
     
 
@@ -275,10 +303,21 @@ class TestStrategy(IStrategy):
         lowerStartPrice = startPrice / math.exp(devMultiplier * detectedStdDev)
         lowerEndPrice =   endPrice / math.exp(devMultiplier * detectedStdDev)
 
-        return (startPrice,endPrice,startAtBar),(upperStartPrice,upperEndPrice),(lowerStartPrice,lowerEndPrice)
+        # Calculate If Uptrend or Downtrend and how strength is this trend
+        # Also Know how many this trend exist with period
+        # ====== Strategies ======
+        # If EndPrice > StartPrice Uptrend
+        # If EndPrice < StartPrice Downtrend
+        trend_direction = endPrice - startPrice
+
+        return trend_direction,detectedPeriod,highestPearsonR
     
 
     def calcDev(self,length:int,dataframe:DataFrame):
+
+        if(len(dataframe) < 200):
+            return 0,0,0,0
+
         logSource = dataframe['close'].apply(lambda x: math.log(x))
 
         period_1 = length -1
@@ -384,10 +423,6 @@ class TestStrategy(IStrategy):
 
             # Loop Through Training Arrays and get distances
             dataframe['predicted_value'] = dataframe.apply((lambda x : self.getPredictedValueFromKNN(x,dataframe)),axis=1)
-
-            print("====================")
-            print(dataframe.loc[:,['predicted_value','close']])
-            print("===================")
             return dataframe
     
     def getPredictedValueFromKNN(self,x,dataframe):
@@ -422,3 +457,166 @@ class TestStrategy(IStrategy):
 
         prediction = np.sum(predictions)
         return prediction
+    
+
+    def adaptiveTrendFinder_2(self,dataframe:DataFrame):
+
+        dataframe['trend_direction'] = dataframe.apply((lambda x: self.calculate_trend_direction(x,dataframe)),axis=1)
+
+        return dataframe
+    
+    def calculate_trend_direction(self,x,dataframe):
+        dataframe = dataframe[:x.name]
+
+         # Variable Can Modify
+        devMultiplier = 2.0
+        # Calculate Deviation,PersionR,Slope,Intercept
+        stdDev01, pearsonR01, slope01, intercept01 = self.calcDev(self.periods[1],dataframe)
+        stdDev02, pearsonR02, slope02, intercept02 = self.calcDev(self.periods[2],dataframe)
+        stdDev03, pearsonR03, slope03, intercept03 = self.calcDev(self.periods[3],dataframe)
+        stdDev04, pearsonR04, slope04, intercept04 = self.calcDev(self.periods[4],dataframe)
+        stdDev05, pearsonR05, slope05, intercept05 = self.calcDev(self.periods[5],dataframe)
+        stdDev06, pearsonR06, slope06, intercept06 = self.calcDev(self.periods[6],dataframe)
+        stdDev07, pearsonR07, slope07, intercept07 = self.calcDev(self.periods[7],dataframe)
+        stdDev08, pearsonR08, slope08, intercept08 = self.calcDev(self.periods[8],dataframe)
+        stdDev09, pearsonR09, slope09, intercept09 = self.calcDev(self.periods[9],dataframe)
+        stdDev10, pearsonR10, slope10, intercept10 = self.calcDev(self.periods[10],dataframe)
+        stdDev11, pearsonR11, slope11, intercept11 = self.calcDev(self.periods[11],dataframe)
+        stdDev12, pearsonR12, slope12, intercept12 = self.calcDev(self.periods[12],dataframe)
+        stdDev13, pearsonR13, slope13, intercept13 = self.calcDev(self.periods[13],dataframe)
+        stdDev14, pearsonR14, slope14, intercept14 = self.calcDev(self.periods[14],dataframe)
+        stdDev15, pearsonR15, slope15, intercept15 = self.calcDev(self.periods[15],dataframe)
+        stdDev16, pearsonR16, slope16, intercept16 = self.calcDev(self.periods[16],dataframe)
+        stdDev17, pearsonR17, slope17, intercept17 = self.calcDev(self.periods[17],dataframe)
+        stdDev18, pearsonR18, slope18, intercept18 = self.calcDev(self.periods[18],dataframe)
+        stdDev19, pearsonR19, slope19, intercept19 = self.calcDev(self.periods[19],dataframe)
+
+        # Find the highest Pearson's R
+        # float highestPearsonR = pearsonR01
+        highestPearsonR = max(pearsonR01, pearsonR02, pearsonR03, pearsonR04, pearsonR05, pearsonR06, pearsonR07, pearsonR08, pearsonR09, pearsonR10, pearsonR11, pearsonR12, pearsonR13, pearsonR14, pearsonR15, pearsonR16, pearsonR17, pearsonR18, pearsonR19)
+
+        # Determine selected length, slope, intercept, and deviations
+        detectedPeriod  = 0
+        detectedSlope   = 0
+        detectedIntrcpt = 0
+        detectedStdDev  = 0
+
+        if highestPearsonR == pearsonR01:
+            detectedPeriod = self.periods[1]
+            detectedSlope = slope01
+            detectedIntrcpt = intercept01
+            detectedStdDev = stdDev01
+        elif highestPearsonR == pearsonR02:
+            detectedPeriod = self.periods[2] 
+            detectedSlope = slope02
+            detectedIntrcpt = intercept02
+            detectedStdDev = stdDev02
+        elif highestPearsonR == pearsonR03:
+            detectedPeriod = self.periods[3]  
+            detectedSlope = slope03
+            detectedIntrcpt = intercept03
+            detectedStdDev = stdDev03
+        elif highestPearsonR == pearsonR04:
+            detectedPeriod = self.periods[4]  
+            detectedSlope = slope04
+            detectedIntrcpt = intercept04
+            detectedStdDev = stdDev04
+        elif highestPearsonR == pearsonR05:
+            detectedPeriod = self.periods[5]  
+            detectedSlope = slope05
+            detectedIntrcpt = intercept05
+            detectedStdDev = stdDev05
+        elif highestPearsonR == pearsonR06:
+            detectedPeriod = self.periods[6]       
+            detectedSlope = slope06
+            detectedIntrcpt = intercept06
+            detectedStdDev = stdDev06
+        elif highestPearsonR == pearsonR07:
+            detectedPeriod = self.periods[7]      
+            detectedSlope = slope07
+            detectedIntrcpt = intercept07
+            detectedStdDev = stdDev07
+        elif highestPearsonR == pearsonR08:
+            detectedPeriod = self.periods[8]       
+            detectedSlope = slope08
+            detectedIntrcpt = intercept08
+            detectedStdDev = stdDev08
+        elif highestPearsonR == pearsonR09:
+            detectedPeriod = self.periods[9]       
+            detectedSlope = slope09
+            detectedIntrcpt = intercept09
+            detectedStdDev = stdDev09
+        elif highestPearsonR == pearsonR10:
+            detectedPeriod = self.periods[10]
+            detectedSlope = slope10
+            detectedIntrcpt = intercept10
+            detectedStdDev = stdDev10
+        elif highestPearsonR == pearsonR11:
+            detectedPeriod = self.periods[11]
+            detectedSlope = slope11
+            detectedIntrcpt = intercept11
+            detectedStdDev = stdDev11
+        elif highestPearsonR == pearsonR12:
+            detectedPeriod = self.periods[12]
+            detectedSlope = slope12
+            detectedIntrcpt = intercept12
+            detectedStdDev = stdDev12
+        elif highestPearsonR == pearsonR13:
+            detectedPeriod = self.periods[13]
+            detectedSlope = slope13
+            detectedIntrcpt = intercept13
+            detectedStdDev = stdDev13
+        elif highestPearsonR == pearsonR14:
+            detectedPeriod = self.periods[14]
+            detectedSlope = slope14
+            detectedIntrcpt = intercept14
+            detectedStdDev = stdDev14
+        elif highestPearsonR == pearsonR15:
+            detectedPeriod = self.periods[15]
+            detectedSlope = slope15
+            detectedIntrcpt = intercept15
+            detectedStdDev = stdDev15
+        elif highestPearsonR == pearsonR16:
+            detectedPeriod = self.periods[16]
+            detectedSlope = slope16
+            detectedIntrcpt = intercept16
+            detectedStdDev = stdDev16
+        elif highestPearsonR == pearsonR17:
+            detectedPeriod = self.periods[17]
+            detectedSlope = slope17
+            detectedIntrcpt = intercept17
+            detectedStdDev = stdDev17
+        elif highestPearsonR == pearsonR18:
+            detectedPeriod = self.periods[18]
+            detectedSlope = slope18
+            detectedIntrcpt = intercept18
+            detectedStdDev = stdDev18
+        elif highestPearsonR == pearsonR19:
+            detectedPeriod = self.periods[19]
+            detectedSlope = slope19
+            detectedIntrcpt = intercept19
+            detectedStdDev = stdDev19
+        else:
+            # Default case
+            raise Exception("Cannot Find Highest PearsonR") 
+        
+        # Calculate start and end price based on detected slope and intercept
+        startPrice = math.exp(detectedIntrcpt + detectedSlope * (detectedPeriod - 1))
+        endPrice = math.exp(detectedIntrcpt)
+        startAtBar = len(dataframe) - detectedPeriod + 1
+
+        # Calculate Upper Upper Price and Upper End price
+        upperStartPrice = startPrice * math.exp(devMultiplier * detectedStdDev)
+        upperEndPrice   =   endPrice * math.exp(devMultiplier * detectedStdDev)
+
+        # Calculate Lower Price and Lower End Price
+        lowerStartPrice = startPrice / math.exp(devMultiplier * detectedStdDev)
+        lowerEndPrice =   endPrice / math.exp(devMultiplier * detectedStdDev)
+
+        # Calculate If Uptrend or Downtrend and how strength is this trend
+        # Also Know how many this trend exist with period
+        # ====== Strategies ======
+        # If EndPrice > StartPrice Uptrend
+        # If EndPrice < StartPrice Downtrend
+        trend_direction = endPrice - startPrice
+        return (trend_direction,detectedPeriod,highestPearsonR)
