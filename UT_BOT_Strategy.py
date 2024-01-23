@@ -18,33 +18,12 @@ from sklearn.metrics import accuracy_score
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 
-# MACD with 20 EMA
-# For Long
-# 1. price < 20EMA and price < macd
-# 2. wait for price is price will cross 20EMA negative to positive and five bars on 5 minute chart 
-# (It means for 5 loopback bars must be in negative EMA and MACD)
-# (In Programming, if current_price is above 20EMA and MACD we must look at 5 candle.)
-# (And this should be negative value in at least 3 candle)
-# 3. If above condition are met, we will go long for 10pips above EMA
+class UTBotStrategy(IStrategy):
 
-
-# This class is a sample. Feel free to customize it.
-class TestStrategy(IStrategy):
-    # Strategy interface version - allow new iterations of the strategy interface.
-    # Check the documentation or the Sample strategy to get the latest version.
     INTERFACE_VERSION = 3
 
-    # Can this strategy go short?
     can_short: bool = True
 
-    # Minimal ROI designed for the strategy.
-    # This attribute will be overridden if the config file contains "minimal_roi".
-    # minimal_roi = {
-    #     "0": 0.2
-    # }
- 
-    # Optimal stoploss designed for the strategy.
-    # This attribute will be overridden if the config file contains "stoploss".
     stoploss = -1
 
     # Trailing stoploss
@@ -58,12 +37,10 @@ class TestStrategy(IStrategy):
 
     # Run "populate_indicators()" only for new candle.
     process_only_new_candles = False
-    # These values can be overridden in the config.
     use_exit_signal = True
     exit_profit_only = False
 
-    # Number of candles the strategy requires before producing valid signals
-    startup_candle_count: int = 600
+    startup_candle_count: int = 40
 
     # Optional order type mapping.
     order_types = {
@@ -74,8 +51,8 @@ class TestStrategy(IStrategy):
     }
 
     # Strategy Constant
-    periods = np.array([0,3,3,4,5,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6])
-    # periods = np.array([0,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200])
+    # periods = np.array([0,3,3,4,5,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6])
+    periods = np.array([0,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200])
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
     
@@ -85,20 +62,14 @@ class TestStrategy(IStrategy):
         dataframe['trend_period'] = dataframe['trend_direction'].apply(lambda x: x[1])
         dataframe['trend_strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
 
-
-        # For Live Trading
-        # trend_direction,detectedPeriod,highestPearsonR = self.adaptiveTrendFinder(dataframe)
-        # dataframe['trend'] = trend_direction
-        # dataframe['trend_strength'] = highestPearsonR
-        # dataframe['trend_period'] = detectedPeriod
-        # KNN Strategy
-        dataframe = self.trainModelML(dataframe)
-
         # MACD Strategy
         dataframe = self.calculateFilter(dataframe)
 
+        # UT BOT
+        dataframe = self.calculate_ut_bot(dataframe)
+
         print("=======================")
-        print((dataframe.loc[len(dataframe)-29:,['vortex_value','final_prediction','predicted_value','close']]))
+        print((dataframe.loc[len(dataframe)-29:,['trend','atr_filter','UT_Signal','close']]))
         print(datetime.now(timezone.utc))
         print("=======================")
         return dataframe
@@ -106,21 +77,17 @@ class TestStrategy(IStrategy):
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                (dataframe['trend'] > 0)
+                (dataframe['UT_Signal'] > 0)
                 &
-                (dataframe['predicted_value'] > 0)
-                &
-                (dataframe['atr_filter'] == True)
+                (dataframe['atr_filter'])
             ),
             'enter_long'] = 1
         
         dataframe.loc[
             (
-                (dataframe['trend'] < 0)
+                (dataframe['UT_Signal'] < 0)
                 &
-                (dataframe['predicted_value'] < 0)
-                &
-                (dataframe['atr_filter'] == True)
+                (dataframe['atr_filter'])
             ),
             'enter_short'] = 1
         return dataframe
@@ -128,17 +95,13 @@ class TestStrategy(IStrategy):
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                (dataframe['trend'] < 0)
-                &
-                (dataframe['final_prediction'] < 0)
+                (dataframe['UT_Signal'] < 0)
             ),
             'exit_long'] = 1
         
         dataframe.loc[
             (
-                (dataframe['trend'] > 0)
-                &
-                (dataframe['final_prediction'] > 0)
+                (dataframe['UT_Signal'] > 0)
             ),
             'exit_short'] = 1
         return dataframe
@@ -148,27 +111,121 @@ class TestStrategy(IStrategy):
                  proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
                  side: str, **kwargs) -> float:
 
-        return 10
+        return 5
     
     # Implement Custom Exit When these condition are met
     # 1. 
-    def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
-                    current_profit: float, **kwargs):
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        last_candle = dataframe.iloc[-1].squeeze()
-        if trade.enter_tag == 'buy_signal_rsi' and last_candle['rsi'] > 80:
-            return 'sell_signal_rsi'
-        return None
+    # def custom_exit(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
+    #                 current_profit: float, **kwargs):
+    #     dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+    #     last_candle = dataframe.iloc[-1].squeeze()
+    #     if trade.enter_tag == 'buy_signal_rsi' and last_candle['rsi'] > 80:
+    #         return 'sell_signal_rsi'
+    #     return None
     
     # Implement Custom Stoploss when
     # 1.
-    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
-                        current_rate: float, current_profit: float, after_fill: bool, 
-                        **kwargs) -> Optional[float]:
-        return -0.04
+    # def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
+    #                     current_rate: float, current_profit: float, after_fill: bool, 
+    #                     **kwargs) -> Optional[float]:
+    #     return -0.05
     
 
     # Helper Function
+    # Function to compute ATRTrailingStop
+    def xATRTrailingStop_func(self,close, prev_close, prev_atr, nloss):
+        if close > prev_atr and prev_close > prev_atr:
+            return max(prev_atr, close - nloss)
+        elif close < prev_atr and prev_close < prev_atr:
+            return min(prev_atr, close + nloss)
+        elif close > prev_atr:
+            return close - nloss
+        else:
+            return close + nloss
+        
+    def calculateEMA(self,src, length):
+        alpha = 2 / (length + 1)
+        
+        # Initialize sum with the Simple Moving Average (SMA) for the first value
+        sma_first_value = src.head(length).mean()
+        sum_value = sma_first_value
+        
+        ema_values = []
+        
+        for value in src:
+            if pd.isna(sum_value):
+                sum_value = sma_first_value
+            else:
+                sum_value = alpha * value + (1 - alpha) * sum_value
+            
+            ema_values.append(sum_value)
+        
+        return pd.Series(ema_values, index=src.index)
+
+    def heikinashi(self,df: pd.DataFrame) -> pd.DataFrame:
+        
+        df_HA = df.copy()
+        df_HA['close']=(df_HA['open']+ df_HA['high']+ df_HA['low']+df_HA['close'])/4
+    
+        for i in range(0, len(df)):
+            if i == 0:
+                df_HA['open'][i]= ( (df_HA['open'][i] + df_HA['close'][i] )/ 2)
+            else:
+                df_HA['open'][i] = ( (df_HA['open'][i-1] + df_HA['close'][i-1] )/ 2)
+    
+        df_HA['high']=df_HA[['open','close','high']].max(axis=1)
+        df_HA['low']=df_HA[['open','close','low']].min(axis=1)
+        return df_HA
+
+    def calculate_ut_bot(self,dataframe):
+        # UT Bot Parameters
+        SENSITIVITY = 1
+        ATR_PERIOD = 10
+
+        dataframe = self.heikinashi(dataframe)
+
+        # Compute ATR And nLoss variable
+        dataframe["xATR"] = ta.ATR(dataframe["high"], dataframe["low"], dataframe["close"], timeperiod=ATR_PERIOD)
+        dataframe["nLoss"] = SENSITIVITY * dataframe["xATR"]
+
+        #Drop all rows that have nan, X first depending on the ATR preiod for the moving average
+        # dataframe = dataframe.dropna()
+        # dataframe = dataframe.reset_index()
+
+        dataframe["ATRTrailingStop"] = [0.0] + [np.nan for i in range(len(dataframe) - 1)]
+
+        for i in range(1, len(dataframe)):
+            dataframe.loc[i, "ATRTrailingStop"] = self.xATRTrailingStop_func(
+                dataframe.loc[i, "close"],
+                dataframe.loc[i - 1, "close"],
+                dataframe.loc[i - 1, "ATRTrailingStop"],
+                dataframe.loc[i, "nLoss"],
+            )
+
+        dataframe['Ema'] = self.calculateEMA(dataframe['close'],1)
+        dataframe["Above"] = (dataframe['Ema'] > dataframe["ATRTrailingStop"])
+        dataframe["Below"] = (dataframe['Ema'] < dataframe["ATRTrailingStop"])
+
+        # Buy Signal
+        dataframe.loc[
+            (
+                (dataframe["close"] > dataframe["ATRTrailingStop"]) 
+                & 
+                (dataframe["Above"]==True)
+            ),
+            'UT_Signal'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe["close"] < dataframe["ATRTrailingStop"]) 
+                & 
+                (dataframe["Below"]==True)
+            ),
+            'UT_Signal'] = -1
+
+        return dataframe
+
+
     def calculate_pip(self, price, initial_price , final_price):
         pip_percentage = ((final_price - initial_price) / initial_price) * 100
         pip_value = price * (pip_percentage / 100)
@@ -208,8 +265,8 @@ class TestStrategy(IStrategy):
         previous_vortex_value = vortex_value_array[index.name-1]
         previous_previous_vortex_value = vortex_value_array[index.name - 2]
 
-        current_vortex_diff = current_vortex_value - previous_vortex_value
-        previous_vortex_diff = previous_vortex_value - previous_previous_vortex_value
+        # current_vortex_diff = current_vortex_value - previous_vortex_value
+        # previous_vortex_diff = previous_vortex_value - previous_previous_vortex_value
         
         # If Current VIM - Previous VIM is + this is called current_vortex_diff
         # Previous VIM - Previous Previous VIM is - this is called previous_vortex_diff
@@ -291,160 +348,6 @@ class TestStrategy(IStrategy):
         divisor  = sumDxx * sumDyy
         pearsonR = np.nan_to_num(sumDyx / math.sqrt(divisor))
         return unStdDev,pearsonR,slope,intercept
-    
-    def minimax(self,volume,x,p,min,max):
-        volume_array = volume.to_numpy()
-        volume_array = volume_array[:x.name+1]
-
-        if(len(volume_array) < p):
-            return 0
-    
-        hi = np.nan_to_num(np.max(volume_array[-p+1:]))
-        lo = np.nan_to_num(np.min(volume_array[-p+1:]))
-
-        return (max - min) * (volume_array[len(volume_array)-1] - lo)/(hi - lo) + min
-    
-    def get_class_label(self,x,close):
-        close_array = close.to_numpy()
-        close_array = close_array[:x.name]
-
-        if(len(close_array) < 1):
-            return 1
-        
-        current_value =  close_array[len(close_array) - 1] 
-        previous_value = close_array[len(close_array) - 2]
-        
-        if(previous_value > current_value):
-            return -1
-        elif(previous_value < current_value):
-            return 1
-        else:
-            return 0
-    
-    def get_long_or_short_prediction(self,index,predicte_list):
-        predicte_array = predicte_list.to_numpy()
-        predicte_array = predicte_array[:index.name]
-
-        if(len(predicte_array) < 1):
-            return 0
-        
-        current_value =  predicte_array[len(predicte_array) - 1] 
-        previous_value = predicte_array[len(predicte_array) - 2]
-        return current_value - previous_value
-    
-    def calculate_CCI(self, dataframe,index,diff,ma,p):
-
-        close_array = dataframe['close'].to_numpy()
-        close_array = close_array[:index.name]
-        diff = diff.to_numpy()
-        diff = diff[index.name]
-        ma = ma.to_numpy()
-        ma = ma[index.name]
-
-        if(len(close_array) < p):
-            return 0
-
-        # MAD
-        s = 0
-
-        for i in range(len(close_array),len(close_array)-p,-1):
-            s = s + abs(dataframe['close'][i] - ma)
-        mad = s / p
-
-        # Scalping
-        mcci = diff/mad/0.015
-        
-        return mcci
-    
-    def scale(self,mom,index,loopback_period):
-        mom_array = mom.to_numpy()
-        mom_array = mom_array[:index.name+1]
-
-        if(len(mom_array) < loopback_period):
-            return 0
-        
-        current_mom = mom[index.name]
-        hi = np.nan_to_num(np.max(mom_array[-loopback_period+1:]))
-        lo = np.nan_to_num(np.min(mom_array[-loopback_period+1:]))
-        
-        return ((current_mom - lo) / (hi - lo)) * 100
-    
-    def trainModelML(self,dataframe):
-            LongWindow = 28
-            ShortWindow = 14
-            # DIFF
-            dataframe['mas'] = ta.SMA(dataframe['close'],timeperiod=LongWindow)
-            diffs = dataframe['close'] - dataframe['mas']
-
-            dataframe['maf'] = ta.SMA(dataframe['close'],timeperiod=ShortWindow)
-            difff = dataframe['close'] - dataframe['maf']
-
-            # 3paris of predictor indicators , long,short each
-            dataframe['rs'] = ta.RSI(dataframe['close'],timeperiod=LongWindow)
-            dataframe['cs'] = dataframe.apply((lambda index: self.calculate_CCI(dataframe,index,diffs,dataframe['mas'],LongWindow)),axis=1)
-            dataframe['os'] = ta.ROC(dataframe['close'],timeperiod=LongWindow)
-            dataframe['vs'] = dataframe.apply((lambda x: self.minimax(dataframe['volume'],x,LongWindow,0,99)),axis=1)
-            dataframe['ms_temp'] = ta.MOM(dataframe['close'],timeperiod=LongWindow)
-            dataframe['ms'] = dataframe.apply((lambda index : self.scale(dataframe['ms_temp'],index,63)),axis=1)
-
-            dataframe['rf'] = ta.RSI(dataframe['close'],timeperiod=ShortWindow)
-            dataframe['cf'] = dataframe.apply((lambda index: self.calculate_CCI(dataframe,index,difff,dataframe['maf'],ShortWindow)),axis=1)
-            dataframe['of'] = ta.ROC(dataframe['close'],timeperiod=ShortWindow)
-            dataframe['vf'] = dataframe.apply((lambda x: self.minimax(dataframe['volume'],x,ShortWindow,0,99)),axis=1)
-            dataframe['mf_temp'] = ta.MOM(dataframe['close'],timeperiod=ShortWindow)
-            dataframe['mf'] = dataframe.apply((lambda index : self.scale(dataframe['mf_temp'],index,63)),axis=1)
-
-            dataframe['f1'] = dataframe.loc[:,['rs','cs','os','vs']].mean(axis=1)
-            dataframe['f2'] = dataframe.loc[:,['rf','cf','of','vf']].mean(axis=1)
-
-            # Classification data, what happens on the next bar
-
-            dataframe['class_label'] = dataframe.apply((lambda x: self.get_class_label(x,dataframe['close'])),axis=1)
-
-            # Loop Through Training Arrays and get distances
-            dataframe['predicted_value'] = dataframe.apply((lambda x : self.getPredictedValueFromKNN(x,dataframe)),axis=1)
-
-            # Calculate for changed value
-            dataframe['final_prediction'] = dataframe.apply((lambda index: self.getDifferenceOfPredictedValue(dataframe,index)),axis=1)
-            return dataframe
-    
-    def getDifferenceOfPredictedValue(self,dataframe,index):
-        predicted_array = dataframe['predicted_value'].to_numpy()
-
-        return predicted_array[index.name] + predicted_array[index.name -1]
-    
-    def getPredictedValueFromKNN(self,x,dataframe):
-        maxdist = -990.0
-        max_predict_candle = 902
-        k = math.floor(math.sqrt(252))
-        predictions = []
-
-        feature_array_1 = dataframe['f1'].to_numpy()
-
-        feature_array_2 = dataframe['f2'].to_numpy()
-
-        direction_array = dataframe['class_label'].to_numpy()
-        
-        current_feature1 =  feature_array_1[x.name] 
-        current_feature2 =  feature_array_2[x.name] 
-
-        feature_array_1 = feature_array_1[:x.name]
-        feature_array_2 = feature_array_2[:x.name]
-        size = x.name - 100
-
-        # 0,size
-        for i in range(0,x.name,1):
-        # for i in range(x.name,x.name-max_predict_candle,-1):
-            d = math.sqrt(math.pow(current_feature1 - feature_array_1[i], 2) + math.pow(current_feature2 - feature_array_2[i], 2))
-            if(d > maxdist):
-                maxdist = d
-                if(len(predictions) >= k):
-                    predictions.pop(0)
-                predictions.append(direction_array[i])
-        prediction = np.sum(predictions)
-        
-        return -prediction
-    
 
     def adaptiveTrendFinder_2(self,dataframe:DataFrame):
 
