@@ -55,9 +55,9 @@ class UTBotStrategy(IStrategy):
     periods = np.array([0,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200])
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-    
+
         # For Backtesting
-        dataframe = self.adaptiveTrendFinder_2(dataframe)
+        dataframe['trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
         dataframe['trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
         dataframe['trend_period'] = dataframe['trend_direction'].apply(lambda x: x[1])
         dataframe['trend_strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
@@ -66,10 +66,10 @@ class UTBotStrategy(IStrategy):
         dataframe = self.calculateFilter(dataframe)
 
         # UT BOT
-        dataframe = self.calculate_ut_bot(dataframe)
+        dataframe['UT_Signal'] = self.calculate_ut_bot(dataframe)
 
         print("=======================")
-        print((dataframe.loc[len(dataframe)-29:,['trend','atr_filter','UT_Signal','close']]))
+        print((dataframe.loc[len(dataframe)-29:,['close']]))
         print(datetime.now(timezone.utc))
         print("=======================")
         return dataframe
@@ -77,6 +77,8 @@ class UTBotStrategy(IStrategy):
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
+                (dataframe['trend'] > 0)
+                &
                 (dataframe['UT_Signal'] > 0)
                 &
                 (dataframe['atr_filter'])
@@ -85,6 +87,8 @@ class UTBotStrategy(IStrategy):
         
         dataframe.loc[
             (
+                (dataframe['trend'] < 0)
+                &
                 (dataframe['UT_Signal'] < 0)
                 &
                 (dataframe['atr_filter'])
@@ -133,6 +137,12 @@ class UTBotStrategy(IStrategy):
 
     # Helper Function
     # Function to compute ATRTrailingStop
+    def sliceDataframe(self,dataframe:DataFrame,length:int) -> pd.DataFrame:
+        if(len(dataframe) > length):
+            dataframe = dataframe[-length:]
+            return dataframe
+        return dataframe
+
     def xATRTrailingStop_func(self,close, prev_close, prev_atr, nloss):
         if close > prev_atr and prev_close > prev_atr:
             return max(prev_atr, close - nloss)
@@ -163,18 +173,18 @@ class UTBotStrategy(IStrategy):
         return pd.Series(ema_values, index=src.index)
 
     def heikinashi(self,df: pd.DataFrame) -> pd.DataFrame:
-        
         df_HA = df.copy()
-        df_HA['close']=(df_HA['open']+ df_HA['high']+ df_HA['low']+df_HA['close'])/4
-    
-        for i in range(0, len(df)):
+        df_HA['close'] = (df_HA['open'] + df_HA['high'] + df_HA['low'] + df_HA['close']) / 4
+
+        for i in range(0, len(df_HA)):
             if i == 0:
-                df_HA['open'][i]= ( (df_HA['open'][i] + df_HA['close'][i] )/ 2)
+                df_HA.loc[i, 'open'] = ((df_HA.loc[i, 'open'] + df_HA.loc[i, 'close']) / 2)
             else:
-                df_HA['open'][i] = ( (df_HA['open'][i-1] + df_HA['close'][i-1] )/ 2)
-    
-        df_HA['high']=df_HA[['open','close','high']].max(axis=1)
-        df_HA['low']=df_HA[['open','close','low']].min(axis=1)
+                df_HA.loc[i, 'open'] = ((df_HA.loc[i-1, 'open'] + df_HA.loc[i-1, 'close']) / 2)
+
+        df_HA['high'] = df_HA[['open', 'close', 'high']].max(axis=1)
+        df_HA['low'] = df_HA[['open', 'close', 'low']].min(axis=1)
+        
         return df_HA
 
     def calculate_ut_bot(self,dataframe):
@@ -223,7 +233,7 @@ class UTBotStrategy(IStrategy):
             ),
             'UT_Signal'] = -1
 
-        return dataframe
+        return dataframe['UT_Signal']
 
 
     def calculate_pip(self, price, initial_price , final_price):
@@ -292,15 +302,15 @@ class UTBotStrategy(IStrategy):
         dataframe['atr_high'] = ta.ATR(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=40)
         dataframe['atr_filter'] = dataframe['atr_low'] > dataframe['atr_high']
 
-        volumeBreakThreshold = 47
-        dataframe['rsi'] = ta.RSI(dataframe['volume'],timeperiod=14)
-        dataframe['osc'] = self.calculateHMA(dataframe,10)
-        dataframe['volume_filter'] = dataframe['osc'] > volumeBreakThreshold
+        # volumeBreakThreshold = 47
+        # dataframe['rsi'] = ta.RSI(dataframe['volume'],timeperiod=14)
+        # dataframe['osc'] = self.calculateHMA(dataframe,10)
+        # dataframe['volume_filter'] = dataframe['osc'] > volumeBreakThreshold
 
-        dataframe['atr_value'] = ta.ATR(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=1)
-        atr_value = dataframe['atr_value'].to_numpy()
-        dataframe['vortex_value'] = dataframe.apply((lambda index : self.calculate_vortex(dataframe,atr_value,index,14)),axis=1)
-        dataframe['vortex_filter'] = dataframe.apply((lambda index : self.calculateVortexFilter(dataframe,index)),axis=1)
+        # dataframe['atr_value'] = ta.ATR(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=1)
+        # atr_value = dataframe['atr_value'].to_numpy()
+        # dataframe['vortex_value'] = dataframe.apply((lambda index : self.calculate_vortex(dataframe,atr_value,index,14)),axis=1)
+        # dataframe['vortex_filter'] = dataframe.apply((lambda index : self.calculateVortexFilter(dataframe,index)),axis=1)
         return dataframe
     
 
@@ -353,7 +363,7 @@ class UTBotStrategy(IStrategy):
 
         dataframe['trend_direction'] = dataframe.apply((lambda x: self.calculate_trend_direction(x,dataframe)),axis=1)
 
-        return dataframe
+        return dataframe['trend_direction']
     
     def calculate_trend_direction(self,x,dataframe):
         dataframe = dataframe[:x.name]
