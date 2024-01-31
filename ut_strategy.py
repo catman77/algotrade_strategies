@@ -19,30 +19,29 @@ from sklearn.metrics import accuracy_score
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 
-class UTBotStrategy(IStrategy):
+class UTStrategy(IStrategy):
 
     INTERFACE_VERSION = 3
-    use_custom_stoploss = True
+    use_custom_stoploss = False
+
+    trailing_stop = True
+    trailing_stop_positive = 0.001
+    trailing_stop_positive_offset = 0.03
+    trailing_only_offset_is_reached = True
 
     can_short: bool = True
 
     # TODO Adjust this parameter
+    stoploss = -0.5
     minimal_roi = {
         "0": 0.2
     }
-    stoploss = -1
-
-    # Trailing stoploss
-    trailing_stop = False
-    trailing_stop_positive = 0.01
-    trailing_stop_positive_offset = 0.1
-    trailing_only_offset_is_reached = False
 
     # Optimal timeframe for the strategy.
     timeframe = '5m'
 
     # Run "populate_indicators()" only for new candle.
-    process_only_new_candles = True
+    process_only_new_candles = False
     use_exit_signal = True
     exit_profit_only = True
 
@@ -57,62 +56,47 @@ class UTBotStrategy(IStrategy):
     }
 
     # Strategy Constant
-    # periods = np.array([0,3,3,4,5,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6])
-    # periods = np.array([0,3,4,5])
-    periods = np.array([0,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200])
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Start AI
-        dataframe = self.freqai.start(dataframe, metadata, self)
 
-        dataframe["ATRTrailingStop"] , dataframe["Ema"] , dataframe['UT_Signal'] = self.calculate_ut_bot(dataframe)
-        dataframe['sar'] = ta.SAR(dataframe)
+        dataframe['UT_Signal'] = self.calculate_ut_bot(dataframe)
+
+        dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
+        dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
+        dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
+        dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
+
         macd = ta.MACD(dataframe)
         dataframe['macd'] = macd['macd']
         dataframe['macdsignal'] = macd['macdsignal']
 
-        # For Backtesting
-        # dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
-        # dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
-        # dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
-        # dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
-        print(dataframe.loc[:,['UT_Signal','sar','macd','macdsignal','close']])
+        print(dataframe.loc[len(dataframe)-30:,['UT_Signal','close']])
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                (dataframe["do_predict"] == 1)
+                (dataframe['UT_Signal'] == 1)
                 &
-                (dataframe["&s-up_or_down"] == "up")
-                # &
-                # (dataframe['macd'] > dataframe['macdsignal'])
-                # &
-                (dataframe['UT_Signal'] > 0)
-                # &
-                # (dataframe['sar'] < dataframe['close'])
-                # &
-                # (dataframe['trend'] > 0)
+                (dataframe['trend'] > 0)
+                &
+                (dataframe['macd'] < dataframe['macdsignal'])
             ),
             'enter_long'] = 1
         
         dataframe.loc[
             (
-                (dataframe["do_predict"] == 1)
+                (dataframe['UT_Signal'] == -1)
                 &
-                (dataframe["&s-up_or_down"] == "down")
-                # &
-                # (dataframe['macd'] < dataframe['macdsignal'])
-                # &
-                (dataframe['UT_Signal'] < 0)
-                # &
-                # (dataframe['sar'] > dataframe['close'])
-                # &
-                # (dataframe['trend'] < 0)
+                (dataframe['trend'] < 0)
+                &
+                (dataframe['macd'] > dataframe['macdsignal'])
             ),
             'enter_short'] = 1
         return dataframe
     
+
+    # ============== Confirm Trade Entry==========
     def confirm_trade_entry(
         self,
         pair: str,
@@ -141,123 +125,38 @@ class UTBotStrategy(IStrategy):
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                (dataframe["do_predict"] == 1)
-                &
-                (dataframe["&s-up_or_down"] == "down")
-                &
-                (dataframe['UT_Signal'] < 0)
+                (dataframe['UT_Signal'] == -1)
             ),
             'exit_long'] = 1
         
         dataframe.loc[
             (
-                (dataframe["do_predict"] == 1)
-                &
-                (dataframe["&s-up_or_down"] == "up")
-                &
-                (dataframe['UT_Signal'] > 0)
+                (dataframe['UT_Signal'] == 1)
             ),
             'exit_short'] = 1
         return dataframe
     
+    # ================== Confrim Custom Exit
     def custom_exit(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
                     current_profit: float, **kwargs):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
         # Sell any positions at a loss if they are losing in 10 minutes.
-        if current_profit < 0 and ((current_time - trade.open_date_utc).seconds >= 300):
-            return 'unclog'
+        if current_profit > 0 and ((current_time - trade.open_date_utc).seconds >= 1200):
+            return 'swp'
+        if current_profit < 0 and ((current_time - trade.open_date_utc).seconds >= 7200):
+            return 'fexit'
         
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
-                           rate: float, time_in_force: str, exit_reason: str,
-                           current_time: datetime, **kwargs) -> bool:
+                            rate: float, time_in_force: str, exit_reason: str,
+                            current_time: datetime, **kwargs) -> bool:
         
-        if  trade.calc_profit_ratio(rate) < 0 and (current_time - trade.open_date_utc).seconds >= 150:
+        if  trade.calc_profit_ratio(rate) < 0 and (current_time - trade.open_date_utc).seconds >= 50:
             return True
         if trade.calc_profit_ratio(rate) < 0:
-            return False
+            return True
         return True
-    
-    def set_freqai_targets(self, dataframe, **kwargs) -> DataFrame:
-        # dataframe["&-action"] = 0
-        dataframe['&s-up_or_down'] = np.where( dataframe["close"].shift(-3) >
-                                        dataframe["close"], 'up', 'down')
-        return dataframe
-    
-    def feature_engineering_standard(self, dataframe: DataFrame, **kwargs) -> DataFrame:
-        # The following features are necessary for RL models
-        dataframe[f"%-raw_close"] = dataframe["close"]
-        dataframe[f"%-raw_open"] = dataframe["open"]
-        dataframe[f"%-raw_high"] = dataframe["high"]
-        dataframe[f"%-raw_low"] = dataframe["low"]
-        dataframe[f"%-raw-volume"] = dataframe["volume"]
-        dataframe[f"%-day_of_week"] = (dataframe["date"].dt.dayofweek + 1) / 7
-        dataframe[f"%-hour_of_day"] = (dataframe["date"].dt.hour + 1) / 25
-
-        # Bollinger Bands
-        # bollinger = qtpylib.bollinger_bands(
-        #     qtpylib.typical_price(dataframe), window=6, stds=2
-        # )
-        # dataframe["%bb_lowerband-period"] = bollinger["lower"]
-        # dataframe["%bb_middleband-period"] = bollinger["mid"]
-        # dataframe["%bb_upperband-period"] = bollinger["upper"]
-
-        # dataframe["%-bb_width-period"] = (
-        #     dataframe["%bb_upperband-period"]
-        #     - dataframe["%bb_lowerband-period"]
-        # ) / dataframe["%bb_middleband-period"]
-
-        # dataframe['%sar'] = ta.SAR(dataframe)
-
-        # # Hammer: values [0, 100]
-        # dataframe['%CDLHAMMER'] = ta.CDLHAMMER(dataframe)
-        # # Inverted Hammer: values [0, 100]
-        # dataframe['%CDLINVERTEDHAMMER'] = ta.CDLINVERTEDHAMMER(dataframe)
-        # # Dragonfly Doji: values [0, 100]
-        # dataframe['%CDLDRAGONFLYDOJI'] = ta.CDLDRAGONFLYDOJI(dataframe)
-        # # Piercing Line: values [0, 100]
-        # dataframe['%CDLPIERCING'] = ta.CDLPIERCING(dataframe) # values [0, 100]
-        # # Morningstar: values [0, 100]
-        # dataframe['%CDLMORNINGSTAR'] = ta.CDLMORNINGSTAR(dataframe) # values [0, 100]
-        # # Three White Soldiers: values [0, 100]
-        # dataframe['%CDL3WHITESOLDIERS'] = ta.CDL3WHITESOLDIERS(dataframe) # values [0, 100]
-        # dataframe['%CDLHANGINGMAN'] = ta.CDLHANGINGMAN(dataframe)
-        # dataframe['%CDLSHOOTINGSTAR'] = ta.CDLSHOOTINGSTAR(dataframe)
-        # dataframe['%CDLGRAVESTONEDOJI'] = ta.CDLGRAVESTONEDOJI(dataframe)
-        # dataframe['%CDLDARKCLOUDCOVER'] = ta.CDLDARKCLOUDCOVER(dataframe)
-        # dataframe['%CDLEVENINGDOJISTAR'] = ta.CDLEVENINGDOJISTAR(dataframe)
-        # dataframe['%CDLEVENINGSTAR'] = ta.CDLEVENINGSTAR(dataframe)
-        # dataframe['%CDL3LINESTRIKE'] = ta.CDL3LINESTRIKE(dataframe)
-        # dataframe['%CDLSPINNINGTOP'] = ta.CDLSPINNINGTOP(dataframe)
-        # dataframe['%CDLENGULFING'] = ta.CDLENGULFING(dataframe)
-        # dataframe['%CDLHARAMI'] = ta.CDLHARAMI(dataframe)
-        # dataframe['%CDL3OUTSIDE'] = ta.CDL3OUTSIDE(dataframe)
-        # dataframe['%CDL3INSIDE'] = ta.CDL3INSIDE(dataframe)
-
-        dataframe['%sma3'] = ta.SMA(dataframe, timeperiod=3)
-        dataframe['%sma5'] = ta.SMA(dataframe, timeperiod=5)
-        dataframe['%sma10'] = ta.SMA(dataframe, timeperiod=10)
-        dataframe['%sma21'] = ta.SMA(dataframe, timeperiod=21)
-        dataframe['%sma50'] = ta.SMA(dataframe, timeperiod=50)
-        dataframe['%sma100'] = ta.SMA(dataframe, timeperiod=100)
-
-        dataframe['%ema3'] = ta.EMA(dataframe, timeperiod=3)
-        dataframe['%ema5'] = ta.EMA(dataframe, timeperiod=5)
-        dataframe['%ema10'] = ta.EMA(dataframe, timeperiod=10)
-        dataframe['%ema21'] = ta.EMA(dataframe, timeperiod=21)
-        dataframe['%ema50'] = ta.EMA(dataframe, timeperiod=50)
-        dataframe['%ema100'] = ta.EMA(dataframe, timeperiod=100)
-        # dataframe['%mfi'] = ta.MFI(dataframe)  
-
-        # MACD Strategy
-        # dataframe = self.calculateFilter(dataframe)
-
-        # UT BOT
-        # dataframe[f"%-ATRTrailingStop"] = dataframe['ATRTrailingStop']
-        # dataframe[f"%-Ema"] = dataframe['Ema']
-        return dataframe
-    
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
@@ -318,7 +217,7 @@ class UTBotStrategy(IStrategy):
         SENSITIVITY = 1
         ATR_PERIOD = 10
 
-        dataframe = self.heikinashi(dataframe)
+        # dataframe = self.heikinashi(dataframe)
 
         # Compute ATR And nLoss variable
         dataframe["xATR"] = ta.ATR(dataframe["high"], dataframe["low"], dataframe["close"], timeperiod=ATR_PERIOD)
@@ -339,8 +238,8 @@ class UTBotStrategy(IStrategy):
             )
 
         dataframe['Ema'] = self.calculateEMA(dataframe['close'],1)
-        dataframe["Above"] = (dataframe['Ema'] > dataframe["ATRTrailingStop"])
-        dataframe["Below"] = (dataframe['Ema'] < dataframe["ATRTrailingStop"])
+        dataframe["Above"] = self.calculate_crossover(dataframe['Ema'],dataframe["ATRTrailingStop"])
+        dataframe["Below"] = self.calculate_crossover(dataframe["ATRTrailingStop"],dataframe['Ema'])
 
         # Buy Signal
         dataframe.loc[
@@ -358,69 +257,11 @@ class UTBotStrategy(IStrategy):
                 (dataframe["Below"]==True)
             ),
             'UT_Signal'] = -1
-
-        return dataframe["ATRTrailingStop"] , dataframe['Ema'] , dataframe['UT_Signal']
-
-
-    def calculate_pip(self, price, initial_price , final_price):
-        pip_percentage = ((final_price - initial_price) / initial_price) * 100
-        pip_value = price * (pip_percentage / 100)
-        return pip_value
-
-    def calculate_vortex(self, dataframe,atr_value ,index, period):
-        high = dataframe['high'].to_numpy()
-        low = dataframe['low'].to_numpy()
-
-        if(index.name < period):
-            return 0
-        VMP = 0
-        VMM = 0
-        STR = 0
-        for i in range(index.name,index.name-period,-1):
-            VMP = VMP + abs(high[i] - low[i-1])
-
-        for i in range(index.name,index.name-period,-1):
-            VMM = VMM + abs(low[i] - high[i-1])
-
-        for i in range(index.name,index.name-period,-1):
-            STR = STR + atr_value[i]
-
-        VIP = VMP / STR
-        VIM = VMM / STR
         
-        return (VIP,VIM)
-    
-    def calculateVortexFilter(self,dataframe,index):
-        # If VIM(VI -) is 1 , 0.9 , 0.7
-        # If VIP(VI +) is 1 , 1.1 , 1.3
-        vortex_value_array = dataframe['vortex_value'].to_numpy()
-        # Format Will be (VIP,VIM)
-        if(index.name < 2):
-            return 0
-        current_vortex_value = vortex_value_array[index.name]
-        previous_vortex_value = vortex_value_array[index.name-1]
-        previous_previous_vortex_value = vortex_value_array[index.name - 2]
+        return dataframe['UT_Signal']
 
-        # current_vortex_diff = current_vortex_value - previous_vortex_value
-        # previous_vortex_diff = previous_vortex_value - previous_previous_vortex_value
-        
-        # If Current VIM - Previous VIM is + this is called current_vortex_diff
-        # Previous VIM - Previous Previous VIM is - this is called previous_vortex_diff
-        # Compare current_vortex_diff and previous_vortex_diff return greater vortex
-
-        return 0
-
-    def calculateHMA(self,dataframe,period):
-        # Calculate weighted moving average with half the period
-        wma_half_period = dataframe['rsi'].rolling(window=period // 2).mean()
-
-        # Calculate weighted moving average with the full period
-        wma_full_period = dataframe['rsi'].rolling(window=period).mean()
-
-        # Calculate the final HMA
-        hma = pd.Series(2 * wma_half_period - wma_full_period).rolling(window=int(np.sqrt(period))).mean()
-
-        return hma
+    def calculate_crossover(self,source1,source2):
+        return (source1 > source2) & (source1.shift(1) <= source2.shift(1))
 
     def calculateFilter(self,dataframe):
         # Calculate ATR VALUE FOR 10 and 40
@@ -428,69 +269,17 @@ class UTBotStrategy(IStrategy):
         dataframe['atr_high'] = ta.ATR(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=10)
         dataframe['atr_filter'] = dataframe['atr_low'] > dataframe['atr_high']
 
-        # volumeBreakThreshold = 47
-        # dataframe['rsi'] = ta.RSI(dataframe['volume'],timeperiod=14)
-        # dataframe['osc'] = self.calculateHMA(dataframe,10)
-        # dataframe['volume_filter'] = dataframe['osc'] > volumeBreakThreshold
-
-        # dataframe['atr_value'] = ta.ATR(dataframe['high'],dataframe['low'],dataframe['close'],timeperiod=1)
-        # atr_value = dataframe['atr_value'].to_numpy()
-        # dataframe['vortex_value'] = dataframe.apply((lambda index : self.calculate_vortex(dataframe,atr_value,index,14)),axis=1)
-        # dataframe['vortex_filter'] = dataframe.apply((lambda index : self.calculateVortexFilter(dataframe,index)),axis=1)
         return dataframe
     
 
-    def calcDev(self,length:int,dataframe:DataFrame):
-
-        if(len(dataframe) < 200):
-            return 0,0,0,0
-
-        logSource = dataframe['close'].apply(lambda x: math.log(x))
-
-        period_1 = length -1
-        sumX = 0.0
-        sumXX = 0.0
-        sumYX = 0.0
-        sumY = 0.0
-        for i in range(1,length+1):
-            lSrc = logSource[len(dataframe)-i]
-            sumX += i
-            sumXX += i * i
-            sumYX += i * lSrc
-            sumY += lSrc
-
-        slope = np.nan_to_num((length * sumYX - sumX * sumY) / (length * sumXX - sumX * sumX))
-        average = sumY / length
-        intercept = average - (slope * sumX / length) + slope
-        sumDev = 0.0
-        sumDxx = 0.0
-        sumDyy = 0.0
-        sumDyx = 0.0
-        regres = intercept + slope * period_1 * 0.5
-        sumSlp = intercept
-
-        for i in range(1,period_1+1):
-            lSrc = logSource[len(dataframe)-i]
-            dxt = lSrc - average
-            dyt  = sumSlp - regres
-            lSrc   -= sumSlp
-            sumSlp += slope
-            sumDxx +=  dxt * dxt
-            sumDyy +=  dyt * dyt
-            sumDyx +=  dxt * dyt
-            sumDev += lSrc * lSrc
-
-        unStdDev = math.sqrt(sumDev / period_1)
-        divisor  = sumDxx * sumDyy
-        pearsonR = np.nan_to_num(sumDyx / math.sqrt(divisor))
-        return unStdDev,pearsonR,slope,intercept
+    periods = np.array([0,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200])
 
     def adaptiveTrendFinder_2(self,dataframe:DataFrame):
 
         dataframe['trend_direction'] = dataframe.apply((lambda x: self.calculate_trend_direction(x,dataframe)),axis=1)
 
         return dataframe['trend_direction']
-    
+
     def calculate_trend_direction(self,x,dataframe):
         dataframe = dataframe[:x.name]
 
@@ -653,3 +442,48 @@ class UTBotStrategy(IStrategy):
         # If EndPrice < StartPrice Downtrend
         trend_direction = endPrice - startPrice
         return (trend_direction,detectedPeriod,highestPearsonR)
+    
+    def calcDev(self,length:int,dataframe:DataFrame):
+
+        if(len(dataframe) < 200):
+            return 0,0,0,0
+
+        logSource = dataframe['close'].apply(lambda x: math.log(x))
+
+        period_1 = length -1
+        sumX = 0.0
+        sumXX = 0.0
+        sumYX = 0.0
+        sumY = 0.0
+        for i in range(1,length+1):
+            lSrc = logSource[len(dataframe)-i]
+            sumX += i
+            sumXX += i * i
+            sumYX += i * lSrc
+            sumY += lSrc
+
+        slope = np.nan_to_num((length * sumYX - sumX * sumY) / (length * sumXX - sumX * sumX))
+        average = sumY / length
+        intercept = average - (slope * sumX / length) + slope
+        sumDev = 0.0
+        sumDxx = 0.0
+        sumDyy = 0.0
+        sumDyx = 0.0
+        regres = intercept + slope * period_1 * 0.5
+        sumSlp = intercept
+
+        for i in range(1,period_1+1):
+            lSrc = logSource[len(dataframe)-i]
+            dxt = lSrc - average
+            dyt  = sumSlp - regres
+            lSrc   -= sumSlp
+            sumSlp += slope
+            sumDxx +=  dxt * dxt
+            sumDyy +=  dyt * dyt
+            sumDyx +=  dxt * dyt
+            sumDev += lSrc * lSrc
+
+        unStdDev = math.sqrt(sumDev / period_1)
+        divisor  = sumDxx * sumDyy
+        pearsonR = np.nan_to_num(sumDyx / math.sqrt(divisor))
+        return unStdDev,pearsonR,slope,intercept

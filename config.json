@@ -1,5 +1,5 @@
 {
-    "max_open_trades": 3,
+    "max_open_trades": 1,
     "stake_currency": "USDT",
     "stake_amount": "unlimited",
     "tradable_balance_ratio": 0.99,
@@ -41,13 +41,58 @@
         "ccxt_config": {},
         "ccxt_async_config": {},
         "pair_whitelist": [
-            "SOL/USDT:USDT",
-            "BAKE/USDT:USDT",
-            "1000BONK/USDT:USDT"
+            "1000BONK/USDT:USDT",
+            "SOL/USDT:USDT"
         ],
         "pair_blacklist": [
             "BNB/.*"
         ]
+    },
+    "freqai": {
+        "enabled": true,
+        "purge_old_models": 2,
+        "fit_live_predictions_candles": 300,
+        "train_period_days": 15,
+        "backtest_period_days": 7,
+        "live_retrain_hours": 1,
+        "identifier": "unique-id-regressor",
+        "feature_parameters": {
+            "include_timeframes": [
+                "5m",
+                "15m",
+                "1h"
+            ],
+            "include_corr_pairlist": [],
+            "label_period_candles": 20,
+            "include_shifted_candles": 3,
+            "DI_threshold": 0.9,
+            "weight_factor": 0.9,
+            "principal_component_analysis": false,
+            "use_SVM_to_remove_outliers": true,
+            "indicator_periods_candles": [
+                10,
+                20
+            ],
+            "plot_feature_importances": 0
+        },
+        "data_split_parameters": {
+            "test_size": 0.33,
+            "random_state": 1
+        },
+        "model_training_parameters": {},
+        "rl_config": {
+            "train_cycles": 25,
+            "add_state_info": true,
+            "max_trade_duration_candles": 300,
+            "max_training_drawdown_pct": 0.02,
+            "cpu_count": 6,
+            "model_type": "PPO",
+            "policy_type": "MlpPolicy",
+            "model_reward_parameters": {
+                "rr": 1,
+                "profit_aim": 0.025
+            }
+        }
     },
     "pairlists": [
         {
