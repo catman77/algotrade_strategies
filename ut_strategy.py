@@ -32,7 +32,7 @@ class UTStrategy(IStrategy):
     can_short: bool = True
 
     # TODO Adjust this parameter
-    stoploss = -0.5
+    stoploss = -1
     minimal_roi = {
         "0": 0.2
     }
@@ -143,9 +143,9 @@ class UTStrategy(IStrategy):
         last_candle = dataframe.iloc[-1].squeeze()
 
         # Sell any positions at a loss if they are losing in 10 minutes.
-        if current_profit > 0 and ((current_time - trade.open_date_utc).seconds >= 1200):
+        if current_profit > 0 and ((current_time - trade.open_date_utc).seconds >= 0):
             return 'swp'
-        if current_profit < 0 and ((current_time - trade.open_date_utc).seconds >= 7200):
+        if current_profit < 0 and ((current_time - trade.open_date_utc).seconds >= 7000):
             return 'fexit'
         
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
