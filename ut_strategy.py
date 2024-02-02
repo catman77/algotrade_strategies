@@ -63,10 +63,10 @@ class UTStrategy(IStrategy):
 
         # dataframe['UT_Signal_Exit'] = self.calculate_ut_bot(dataframe,2,10)
 
-        # dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
-        # dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
-        # dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
-        # dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
+        dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
+        dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
+        dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
+        dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
 
         macd = ta.MACD(dataframe)
         dataframe['macd'] = macd['macd']
@@ -79,16 +79,16 @@ class UTStrategy(IStrategy):
         dataframe.loc[
             (
                 (dataframe['UT_Signal'] == 1)
-                # &
-                # (dataframe['trend'] > 0)
+                &
+                (dataframe['trend'] > 0)
             ),
             'enter_long'] = 1
         
         dataframe.loc[
             (
                 (dataframe['UT_Signal'] == -1)
-                # &
-                # (dataframe['trend'] < 0)
+                &
+                (dataframe['trend'] < 0)
             ),
             'enter_short'] = 1
         return dataframe
