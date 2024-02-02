@@ -26,13 +26,13 @@ class UTStrategy(IStrategy):
 
     trailing_stop = True
     trailing_stop_positive = 0.001
-    trailing_stop_positive_offset = 0.03
+    trailing_stop_positive_offset = 0.05
     trailing_only_offset_is_reached = True
 
     can_short: bool = True
 
     # TODO Adjust this parameter
-    stoploss = -1
+    stoploss = -0.1
     minimal_roi = {
         "0": 0.2
     }
@@ -42,8 +42,8 @@ class UTStrategy(IStrategy):
 
     # Run "populate_indicators()" only for new candle.
     process_only_new_candles = False
-    use_exit_signal = True
-    exit_profit_only = True
+    use_exit_signal = False
+    exit_profit_only = False
 
     startup_candle_count: int = 60
 
@@ -59,12 +59,14 @@ class UTStrategy(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
 
-        dataframe['UT_Signal'] = self.calculate_ut_bot(dataframe)
+        dataframe['UT_Signal'] = self.calculate_ut_bot(dataframe,1,300)
 
-        dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
-        dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
-        dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
-        dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
+        # dataframe['UT_Signal_Exit'] = self.calculate_ut_bot(dataframe,2,10)
+
+        # dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
+        # dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
+        # dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
+        # dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
 
         macd = ta.MACD(dataframe)
         dataframe['macd'] = macd['macd']
@@ -77,20 +79,16 @@ class UTStrategy(IStrategy):
         dataframe.loc[
             (
                 (dataframe['UT_Signal'] == 1)
-                &
-                (dataframe['trend'] > 0)
-                &
-                (dataframe['macd'] < dataframe['macdsignal'])
+                # &
+                # (dataframe['trend'] > 0)
             ),
             'enter_long'] = 1
         
         dataframe.loc[
             (
                 (dataframe['UT_Signal'] == -1)
-                &
-                (dataframe['trend'] < 0)
-                &
-                (dataframe['macd'] > dataframe['macdsignal'])
+                # &
+                # (dataframe['trend'] < 0)
             ),
             'enter_short'] = 1
         return dataframe
@@ -143,26 +141,26 @@ class UTStrategy(IStrategy):
         last_candle = dataframe.iloc[-1].squeeze()
 
         # Sell any positions at a loss if they are losing in 10 minutes.
-        if current_profit > 0 and ((current_time - trade.open_date_utc).seconds >= 0):
-            return 'swp'
-        if current_profit < 0 and ((current_time - trade.open_date_utc).seconds >= 7000):
-            return 'fexit'
+        # if current_profit > 0 and ((current_time - trade.open_date_utc).seconds >= 0):
+        #     return 'swp'
+        # if current_profit < 0 and ((current_time - trade.open_date_utc).seconds >= 7000):
+        #     return 'fexit'
         
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
                             rate: float, time_in_force: str, exit_reason: str,
                             current_time: datetime, **kwargs) -> bool:
         
-        if  trade.calc_profit_ratio(rate) < 0 and (current_time - trade.open_date_utc).seconds >= 50:
-            return True
-        if trade.calc_profit_ratio(rate) < 0:
-            return True
+        # if  trade.calc_profit_ratio(rate) < 0 and (current_time - trade.open_date_utc).seconds >= 50:
+        #     return True
+        # if trade.calc_profit_ratio(rate) < 0:
+        #     return True
         return True
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
                  side: str, **kwargs) -> float:
 
-        return 5
+        return 10
     
 
     # Helper Function
@@ -212,10 +210,10 @@ class UTStrategy(IStrategy):
         
         return df_HA
 
-    def calculate_ut_bot(self,dataframe):
+    def calculate_ut_bot(self,dataframe,SENSITIVITY,ATR_PERIOD):
         # UT Bot Parameters
-        SENSITIVITY = 1
-        ATR_PERIOD = 10
+        SENSITIVITY = SENSITIVITY
+        ATR_PERIOD = ATR_PERIOD
 
         # dataframe = self.heikinashi(dataframe)
 
