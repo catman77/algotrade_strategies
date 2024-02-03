@@ -26,13 +26,13 @@ class UTStrategy(IStrategy):
 
     trailing_stop = True
     trailing_stop_positive = 0.001
-    trailing_stop_positive_offset = 0.05
+    trailing_stop_positive_offset = 0.1
     trailing_only_offset_is_reached = True
 
     can_short: bool = True
 
     # TODO Adjust this parameter
-    stoploss = -0.1
+    stoploss = -0.2
     minimal_roi = {
         "0": 0.2
     }
@@ -59,36 +59,33 @@ class UTStrategy(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
 
-        dataframe['UT_Signal'] = self.calculate_ut_bot(dataframe,1,300)
+        dataframe['UT_Signal_Sell'] = self.calculate_ut_bot(dataframe,1,10)
+        dataframe['UT_Signal_Buy'] = self.calculate_ut_bot(dataframe,1,10)
 
-        # dataframe['UT_Signal_Exit'] = self.calculate_ut_bot(dataframe,2,10)
+        # dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
+        # dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
+        # dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
+        # dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
 
-        dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
-        dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
-        dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
-        dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
-
-        macd = ta.MACD(dataframe)
-        dataframe['macd'] = macd['macd']
-        dataframe['macdsignal'] = macd['macdsignal']
-
-        print(dataframe.loc[len(dataframe)-30:,['UT_Signal','close']])
+        # STC Indicator
+        dataframe['stc_signal'] = self.calculateSTCIndicator(dataframe,80,50,80)
+        # print(dataframe.loc[len(dataframe)-50:,['stc_signal','close']])
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                (dataframe['UT_Signal'] == 1)
-                &
-                (dataframe['trend'] > 0)
+                # (dataframe['UT_Signal_Buy'] == 1)
+                # &
+                (dataframe['stc_signal'] == 1)
             ),
             'enter_long'] = 1
         
         dataframe.loc[
             (
-                (dataframe['UT_Signal'] == -1)
-                &
-                (dataframe['trend'] < 0)
+                # (dataframe['UT_Signal_Sell'] == -1)
+                # &
+                (dataframe['stc_signal'] == -1)
             ),
             'enter_short'] = 1
         return dataframe
@@ -123,13 +120,17 @@ class UTStrategy(IStrategy):
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                (dataframe['UT_Signal'] == -1)
+                (dataframe['UT_Signal_Sell'] == -1)
+                &
+                (dataframe['stc_signal'] == -1)
             ),
             'exit_long'] = 1
         
         dataframe.loc[
             (
-                (dataframe['UT_Signal'] == 1)
+                (dataframe['UT_Signal_Buy'] == 1)
+                &
+                (dataframe['stc_signal'] == 1)
             ),
             'exit_short'] = 1
         return dataframe
@@ -160,10 +161,67 @@ class UTStrategy(IStrategy):
                  proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
                  side: str, **kwargs) -> float:
 
-        return 10
+        return 20
     
 
     # Helper Function
+    def calculateSTCIndicator(self,dataframe,length,fastLength,slowLength):
+        EEEEEE = length
+        BBBB = fastLength
+        BBBBB = slowLength
+        mAAAAA = self.AAAAA(dataframe,EEEEEE, BBBB, BBBBB)
+        return mAAAAA
+
+    
+    def AAAA(self,BBB, BBBB, BBBBB):
+        fastMA = ta.EMA(BBB, timeperiod=BBBB)
+        slowMA = ta.EMA(BBB, timeperiod=BBBBB)
+        AAAA = fastMA - slowMA
+        return AAAA
+
+    def AAAAA(self,dataframe,EEEEEE, BBBB, BBBBB):
+
+        AAA = 0.5
+        dataframe['DDD'] = 0
+        dataframe['CCCCC'] = 0
+        dataframe['DDDDDD'] = 0
+        dataframe['EEEEE'] = 0
+        
+        dataframe['BBBBBB'] = self.AAAA(dataframe['close'], BBBB, BBBBB)
+        dataframe['CCC'] = dataframe['BBBBBB'].rolling(window=EEEEEE).min()
+        dataframe['CCCC'] = dataframe['BBBBBB'].rolling(window=EEEEEE).max() - dataframe['CCC']
+        dataframe['CCCCC'] = np.where(dataframe['CCCC'] > 0, (dataframe['BBBBBB'] - dataframe['CCC']) / dataframe['CCCC'] * 100, dataframe['CCCCC'].shift(1).fillna(0))
+
+        for i in range(0, len(dataframe)):
+            if(i>0):
+                dataframe.at[i, 'DDD'] = dataframe['DDD'].iloc[i-1] + (AAA * (dataframe.at[i, 'CCCCC'] - dataframe['DDD'].iloc[i-1]))
+
+        dataframe['DDDD'] = dataframe['DDD'].rolling(window=EEEEEE).min()
+        dataframe['DDDDD'] = dataframe['DDD'].rolling(window=EEEEEE).max() - dataframe['DDDD']
+        dataframe['DDDDDD'] = np.where(dataframe['DDD'] > 0, (dataframe['DDD'] - dataframe['DDDD']) / dataframe['DDDDD'] * 100 , dataframe['DDD'].fillna(dataframe['DDDDDD'].shift(1)))
+
+        for i in range(0, len(dataframe)):
+            if(i>0):
+                dataframe.at[i, 'EEEEE'] = dataframe['EEEEE'].iloc[i-1] + (AAA * (dataframe.at[i, 'DDDDDD'] - dataframe['EEEEE'].iloc[i-1]))
+
+        dataframe.loc[
+            (
+                (dataframe['EEEEE'] > dataframe['EEEEE'].shift(1))
+                # &
+                # (dataframe['EEEEE'] < 15)
+            ),
+            'stc_signal'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe['EEEEE'] < dataframe['EEEEE'].shift(1))
+                # &
+                # (dataframe['EEEEE'] > 90.5)
+            ),
+            'stc_signal'] = -1
+        
+        return dataframe['stc_signal']
+
     # Function to compute ATRTrailingStop
 
     def xATRTrailingStop_func(self,close, prev_close, prev_atr, nloss):
