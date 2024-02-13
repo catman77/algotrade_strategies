@@ -32,9 +32,9 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     INTERFACE_VERSION = 3
     can_short: bool = True
-    timeframe = '1m'
+    timeframe = '5m'
     stoploss = -1
-    process_only_new_candles = False
+    process_only_new_candles = True
     use_exit_signal = True
     exit_profit_only = False
     startup_candle_count: int = 60
@@ -50,13 +50,12 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe = self.calculateIndicator(dataframe)
-        print(dataframe.loc[len(dataframe)-10:,['date','predicted_value','close']])
         # dataframe = self.calculateBigTimeTrame(dataframe,5)
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition =  dataframe['predicted_value'] > 1
-        sell_condition = dataframe['predicted_value'] < -1
+        buy_condition =  dataframe['predicted_value'] > 2
+        sell_condition = dataframe['predicted_value'] < -2
         dataframe.loc[
             (
                 buy_condition
@@ -123,11 +122,11 @@ class AIPoweredScalpingStrategy(IStrategy):
 
         # trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
         # trade_candle = dataframe.loc[dataframe['date'] == trade_date]
-        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
-        is_the_best_time_to_trade = True
-        if(is_the_best_time_to_trade) & (current_profit > 0):
+        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        # is_the_best_time_to_trade = True
+        if(is_the_best_time_to_trade) & (current_profit > 0) & ((current_time - trade.open_date_utc).seconds >= 300):
             return 'sell'
-        if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds >= 180):
+        if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds >= 300):
             return 'stopsell'
     
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
@@ -346,7 +345,7 @@ class AIPoweredScalpingStrategy(IStrategy):
         X = data_combined[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']]
         y = np.where(data_combined['output'] > 0,1,-1)
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=37)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=37)
 
         # Step 2: Model Selection
         knn_model = KNeighborsClassifier(n_neighbors=1)
@@ -359,7 +358,7 @@ class AIPoweredScalpingStrategy(IStrategy):
                                     ('rf', random_forest_model),
                                     ('gnb', gnb_model)
                                 ], 
-                                voting='soft',
+                                voting='hard',
                                 )
 
         # Step 3: Model Training
@@ -369,6 +368,6 @@ class AIPoweredScalpingStrategy(IStrategy):
         data_for_prediction = pd.concat([dataframe], axis=1)
         data_for_prediction.fillna(0,inplace=True)
         data_for_prediction['last_10_predicted_value'] = model.predict(data_for_prediction[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']])
-        data_for_prediction['predicted_value'] = data_for_prediction['last_10_predicted_value'] + data_for_prediction['last_10_predicted_value'].shift(-1) + data_for_prediction['last_10_predicted_value'].shift(-2)
+        data_for_prediction['predicted_value'] = data_for_prediction['last_10_predicted_value'] + data_for_prediction['last_10_predicted_value'].shift(-1) + data_for_prediction['last_10_predicted_value'].shift(-2) + data_for_prediction['last_10_predicted_value'].shift(-3) + data_for_prediction['last_10_predicted_value'].shift(-4)
         data_for_prediction['predicted_value'] = data_for_prediction['predicted_value'].shift(10)
         return data_for_prediction
