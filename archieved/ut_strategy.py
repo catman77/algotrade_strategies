@@ -26,13 +26,13 @@ class UTStrategy(IStrategy):
 
     trailing_stop = True
     trailing_stop_positive = 0.001
-    trailing_stop_positive_offset = 0.1
+    trailing_stop_positive_offset = 0.002
     trailing_only_offset_is_reached = True
 
     can_short: bool = True
 
     # TODO Adjust this parameter
-    stoploss = -0.2
+    stoploss = -1
     minimal_roi = {
         "0": 0.2
     }
@@ -42,7 +42,7 @@ class UTStrategy(IStrategy):
 
     # Run "populate_indicators()" only for new candle.
     process_only_new_candles = False
-    use_exit_signal = False
+    use_exit_signal = True
     exit_profit_only = False
 
     startup_candle_count: int = 60
@@ -59,32 +59,32 @@ class UTStrategy(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
 
-        dataframe['UT_Signal_Sell'] = self.calculate_ut_bot(dataframe,1,10)
-        dataframe['UT_Signal_Buy'] = self.calculate_ut_bot(dataframe,1,10)
+        # dataframe['UT_Signal_Sell'] = self.calculate_ut_bot(dataframe,2,300)
+        # dataframe['UT_Signal_Buy'] = self.calculate_ut_bot(dataframe,2,300)
 
-        # dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
-        # dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
-        # dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
-        # dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
+        dataframe[f'trend_direction'] = self.adaptiveTrendFinder_2(dataframe)
+        dataframe[f'trend'] = dataframe['trend_direction'].apply(lambda x: x[0])
+        dataframe[f'trend-period'] = dataframe['trend_direction'].apply(lambda x: x[1])
+        dataframe[f'trend-strength'] = dataframe['trend_direction'].apply(lambda x: x[2])
 
         # STC Indicator
-        dataframe['stc_signal'] = self.calculateSTCIndicator(dataframe,80,50,80)
+        dataframe['stc_signal'] = self.calculateSTCIndicator(dataframe,2,50,80)
         # print(dataframe.loc[len(dataframe)-50:,['stc_signal','close']])
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # (dataframe['UT_Signal_Buy'] == 1)
-                # &
+                (dataframe['trend'] > 0)
+                &
                 (dataframe['stc_signal'] == 1)
             ),
             'enter_long'] = 1
         
         dataframe.loc[
             (
-                # (dataframe['UT_Signal_Sell'] == -1)
-                # &
+                (dataframe['trend'] < 0)
+                &
                 (dataframe['stc_signal'] == -1)
             ),
             'enter_short'] = 1
@@ -120,17 +120,17 @@ class UTStrategy(IStrategy):
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                (dataframe['UT_Signal_Sell'] == -1)
-                &
+                # (dataframe['UT_Signal_Buy'] == -1)
+                # &
                 (dataframe['stc_signal'] == -1)
             ),
             'exit_long'] = 1
         
         dataframe.loc[
             (
-                (dataframe['UT_Signal_Buy'] == 1)
-                &
-                (dataframe['stc_signal'] == 1)
+                # (dataframe['UT_Signal_Sell'] == -1)
+                # &
+                (dataframe['stc_signal'] == -1)
             ),
             'exit_short'] = 1
         return dataframe
@@ -142,7 +142,7 @@ class UTStrategy(IStrategy):
         last_candle = dataframe.iloc[-1].squeeze()
 
         # Sell any positions at a loss if they are losing in 10 minutes.
-        # if current_profit > 0 and ((current_time - trade.open_date_utc).seconds >= 0):
+        # if current_profit > 0 and ((current_time - trade.open_date_utc).seconds >= 1200):
         #     return 'swp'
         # if current_profit < 0 and ((current_time - trade.open_date_utc).seconds >= 7000):
         #     return 'fexit'
@@ -151,9 +151,9 @@ class UTStrategy(IStrategy):
                             rate: float, time_in_force: str, exit_reason: str,
                             current_time: datetime, **kwargs) -> bool:
         
-        # if  trade.calc_profit_ratio(rate) < 0 and (current_time - trade.open_date_utc).seconds >= 50:
+        # if exit_reason == "swp":
         #     return True
-        # if trade.calc_profit_ratio(rate) < 0:
+        # if exit_reason == "exit_signal":
         #     return True
         return True
 
@@ -161,7 +161,7 @@ class UTStrategy(IStrategy):
                  proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
                  side: str, **kwargs) -> float:
 
-        return 20
+        return 40
     
 
     # Helper Function
@@ -181,11 +181,11 @@ class UTStrategy(IStrategy):
 
     def AAAAA(self,dataframe,EEEEEE, BBBB, BBBBB):
 
-        AAA = 0.5
-        dataframe['DDD'] = 0
+        AAA = 0.1
+        dataframe['DDD'] = 0.0
         dataframe['CCCCC'] = 0
         dataframe['DDDDDD'] = 0
-        dataframe['EEEEE'] = 0
+        dataframe['EEEEE'] = 0.0
         
         dataframe['BBBBBB'] = self.AAAA(dataframe['close'], BBBB, BBBBB)
         dataframe['CCC'] = dataframe['BBBBBB'].rolling(window=EEEEEE).min()

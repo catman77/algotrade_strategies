@@ -1,0 +1,42 @@
+{
+  "strategy_name": "UTWithSTCStrategy",
+  "params": {
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": 0.001,
+      "trailing_stop_positive_offset": 0.002,
+      "trailing_only_offset_is_reached": true
+    },
+    "max_open_trades": {
+      "max_open_trades": 5
+    },
+    "buy": {
+      "loopback_period_long": 9,
+      "stc_fastLength_buy": 5,
+      "stc_length_buy": 9,
+      "stc_slowLength_buy": 28,
+      "ut_bot_ATR_PERIOD_BUY": 3,
+      "ut_bot_SENSITIVITY_BUY": 1
+    },
+    "sell": {
+      "loopback_period_short": 10,
+      "stc_fastLength_sell": 24,
+      "stc_length_sell": 5,
+      "stc_slowLength_sell": 12,
+      "ut_bot_ATR_PERIOD_SELL": 13,
+      "ut_bot_SENSITIVITY_SELL": 3
+    },
+    "protection": {},
+    "roi": {
+      "0": 0.11300000000000002,
+      "20": 0.07100000000000001,
+      "46": 0.014,
+      "130": 0
+    },
+    "stoploss": {
+      "stoploss": -0.029
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2024-02-06 10:19:59.422296+00:00"
+}

@@ -1,0 +1,26 @@
+{
+  "strategy_name": "ScalpingStrategy",
+  "params": {
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": 1e-05,
+      "trailing_stop_positive_offset": 0.001,
+      "trailing_only_offset_is_reached": true
+    },
+    "max_open_trades": {
+      "max_open_trades": 5
+    },
+    "buy": {
+      "stc_fastLength_buy": 27,
+      "stc_length_buy": 12,
+      "stc_slowLength_buy": 30
+    },
+    "sell": {
+      "stc_fastLength_sell": 27,
+      "stc_length_sell": 12,
+      "stc_slowLength_sell": 30
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2024-02-07 14:35:23.814290+00:00"
+}
