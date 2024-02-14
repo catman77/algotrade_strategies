@@ -32,8 +32,12 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     INTERFACE_VERSION = 3
     can_short: bool = True
-    timeframe = '5m'
+    timeframe = '1m'
     stoploss = -1
+    trailing_stop = True
+    trailing_stop_positive = 0.0001
+    trailing_stop_positive_offset = 0.002
+    trailing_only_offset_is_reached = True
     process_only_new_candles = True
     use_exit_signal = True
     exit_profit_only = False
@@ -50,12 +54,12 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe = self.calculateIndicator(dataframe)
-        # dataframe = self.calculateBigTimeTrame(dataframe,5)
+        dataframe['stc_signal'] = self.calculateSTCIndicator(dataframe,12,26,50)
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition =  dataframe['predicted_value'] > 2
-        sell_condition = dataframe['predicted_value'] < -2
+        buy_condition =  (dataframe['predicted_value'] == 5) & (dataframe['stc_signal'] == 1)
+        sell_condition = (dataframe['predicted_value'] == -5) & (dataframe['stc_signal'] == -1)
         dataframe.loc[
             (
                 buy_condition
@@ -106,7 +110,8 @@ class AIPoweredScalpingStrategy(IStrategy):
         # df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         # last_candle = df.iloc[-1].squeeze()
 
-        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        is_the_best_time_to_trade = True
 
         if side == "long" and is_the_best_time_to_trade:              
             return True
@@ -124,15 +129,24 @@ class AIPoweredScalpingStrategy(IStrategy):
         # trade_candle = dataframe.loc[dataframe['date'] == trade_date]
         is_the_best_time_to_trade = self.is_quarter_hour(current_time)
         # is_the_best_time_to_trade = True
-        if(is_the_best_time_to_trade) & (current_profit > 0) & ((current_time - trade.open_date_utc).seconds >= 300):
+        if(is_the_best_time_to_trade) & (current_profit > 0) & is_the_best_time_to_trade:
             return 'sell'
-        if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds >= 300):
+        if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds >= 180) & is_the_best_time_to_trade:
             return 'stopsell'
     
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time: datetime, **kwargs) -> bool:
-        return True
+        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        if is_the_best_time_to_trade:
+            # with open("output.txt", "a") as f:
+            #     f.write("\n")
+            #     f.write(f"============{pair}{trade.id}============\n")
+            #     f.write(f"current-time: {current_time}\n")
+            #     f.write(f"trade-open: {trade.open_date_utc}\n")
+            #     f.write(f"profit : {trade.calc_profit_ratio(rate)}\n")
+            #     f.write(f"reason: {exit_reason}\n")
+            return True
 
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
@@ -182,7 +196,8 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     def is_quarter_hour(self,time:datetime):
         seconds = time.second
-        return (0 <= seconds < 2)
+        minutes = time.minute
+        return (0 <= seconds < 3)
     
     def get_ticker_indicator(self):
         return int(self.timeframe[:-1])
@@ -371,3 +386,75 @@ class AIPoweredScalpingStrategy(IStrategy):
         data_for_prediction['predicted_value'] = data_for_prediction['last_10_predicted_value'] + data_for_prediction['last_10_predicted_value'].shift(-1) + data_for_prediction['last_10_predicted_value'].shift(-2) + data_for_prediction['last_10_predicted_value'].shift(-3) + data_for_prediction['last_10_predicted_value'].shift(-4)
         data_for_prediction['predicted_value'] = data_for_prediction['predicted_value'].shift(10)
         return data_for_prediction
+    
+    # =============================================================
+    # ===================== STC Indicator =========================
+    # =============================================================
+    def calculateSTCIndicator(self,dataframe,length,fastLength,slowLength):
+        EEEEEE = length
+        BBBB = fastLength
+        BBBBB = slowLength
+        mAAAAA = self.AAAAA(dataframe,EEEEEE, BBBB, BBBBB)
+        return mAAAAA
+
+    
+    def AAAA(self,BBB, BBBB, BBBBB):
+        fastMA = ta.EMA(BBB, timeperiod=BBBB)
+        slowMA = ta.EMA(BBB, timeperiod=BBBBB)
+        AAAA = fastMA - slowMA
+        return AAAA
+
+    def AAAAA(self,dataframe,EEEEEE, BBBB, BBBBB):
+
+        AAA = 0.5
+        dataframe['DDD'] = 0.0
+        dataframe['CCCCC'] = 0
+        dataframe['DDDDDD'] = 0
+        dataframe['EEEEE'] = 0.0
+        
+        dataframe['BBBBBB'] = self.AAAA(dataframe['close'], BBBB, BBBBB)
+        dataframe['CCC'] = dataframe['BBBBBB'].rolling(window=EEEEEE).min()
+        dataframe['CCCC'] = dataframe['BBBBBB'].rolling(window=EEEEEE).max() - dataframe['CCC']
+        dataframe['CCCCC'] = np.where(dataframe['CCCC'] > 0, (dataframe['BBBBBB'] - dataframe['CCC']) / dataframe['CCCC'] * 100, dataframe['CCCCC'].shift(1).fillna(0))
+
+        for i in range(0, len(dataframe)):
+            if(i>0):
+                dataframe.at[i, 'DDD'] = dataframe['DDD'].iloc[i-1] + (AAA * (dataframe.at[i, 'CCCCC'] - dataframe['DDD'].iloc[i-1]))
+
+        dataframe['DDDD'] = dataframe['DDD'].rolling(window=EEEEEE).min()
+        dataframe['DDDDD'] = dataframe['DDD'].rolling(window=EEEEEE).max() - dataframe['DDDD']
+        dataframe['DDDDDD'] = np.where(dataframe['DDD'] > 0, (dataframe['DDD'] - dataframe['DDDD']) / dataframe['DDDDD'] * 100 , dataframe['DDD'].fillna(dataframe['DDDDDD'].shift(1)))
+
+        for i in range(0, len(dataframe)):
+            if(i>0):
+                dataframe.at[i, 'EEEEE'] = dataframe['EEEEE'].iloc[i-1] + (AAA * (dataframe.at[i, 'DDDDDD'] - dataframe['EEEEE'].iloc[i-1]))
+
+        dataframe.loc[
+            (
+                (dataframe['EEEEE'] > dataframe['EEEEE'].shift(1))
+            ),
+            'stc_signal'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe['EEEEE'] < dataframe['EEEEE'].shift(1))
+            ),
+            'stc_signal'] = -1
+        
+        dataframe.loc[
+            (
+                (dataframe['stc_signal'] == 1)
+                &
+                (dataframe['stc_signal'].shift(1) == -1)
+            ),
+            'stc_entry_exit'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe['stc_signal'] == -1)
+                &
+                (dataframe['stc_signal'].shift(1) == 1)
+            ),
+            'stc_entry_exit'] = -1
+        
+        return dataframe['stc_entry_exit']
