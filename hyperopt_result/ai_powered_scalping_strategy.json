@@ -1,36 +1,33 @@
 {
   "strategy_name": "AIPoweredScalpingStrategy",
   "params": {
+    "trailing": {
+      "trailing_stop": true,
+      "trailing_stop_positive": 0.0001,
+      "trailing_stop_positive_offset": 0.002,
+      "trailing_only_offset_is_reached": true
+    },
     "max_open_trades": {
       "max_open_trades": 5
     },
     "buy": {
-      "stc_fastLength_buy": 26,
-      "stc_length_buy": 12,
-      "stc_slowLength_buy": 50
+      "stc_fastLength_buy": 7,
+      "stc_length_buy": 33,
+      "stc_slowLength_buy": 27
     },
     "sell": {
-      "stc_fastLength_sell": 26,
-      "stc_length_sell": 12,
-      "stc_slowLength_sell": 50
+      "stc_fastLength_sell": 16,
+      "stc_length_sell": 37,
+      "stc_slowLength_sell": 68
     },
     "protection": {},
     "roi": {
-      "0": 0.056,
-      "8": 0.014,
-      "10": 0.008,
-      "29": 0
-    },
-    "stoploss": {
-      "stoploss": -0.309
-    },
-    "trailing": {
-      "trailing_stop": true,
-      "trailing_stop_positive": 0.295,
-      "trailing_stop_positive_offset": 0.393,
-      "trailing_only_offset_is_reached": false
+      "0": 0.10800000000000001,
+      "8": 0.039,
+      "10": 0.015,
+      "17": 0
     }
   },
   "ft_stratparam_v": 1,
-  "export_time": "2024-02-14 09:46:56.235850+00:00"
+  "export_time": "2024-02-14 10:20:23.616867+00:00"
 }

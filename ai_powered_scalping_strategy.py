@@ -68,8 +68,8 @@ class AIPoweredScalpingStrategy(IStrategy):
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition =  (dataframe['predicted_value'] > 0) & (dataframe['stc_signal_buy'] == 1)
-        sell_condition = (dataframe['predicted_value'] < 0) & (dataframe['stc_signal_sell'] == -1)
+        buy_condition =  (dataframe['predicted_value'] == 5) & (dataframe['stc_signal_buy'] == 1)
+        sell_condition = (dataframe['predicted_value'] == -5) & (dataframe['stc_signal_sell'] == -1)
         dataframe.loc[
             (
                 buy_condition
@@ -139,10 +139,10 @@ class AIPoweredScalpingStrategy(IStrategy):
         # trade_candle = dataframe.loc[dataframe['date'] == trade_date]
         is_the_best_time_to_trade = self.is_quarter_hour(current_time)
         # is_the_best_time_to_trade = True
-        if(is_the_best_time_to_trade) & (current_profit > 0) & is_the_best_time_to_trade:
-            return 'sell'
-        if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds > 500) & is_the_best_time_to_trade:
-            return 'stopsell'
+        # if(is_the_best_time_to_trade) & (current_profit > 0) & is_the_best_time_to_trade:
+        #     return 'sell'
+        # if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds > 500) & is_the_best_time_to_trade:
+        #     return 'stopsell'
     
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
                            rate: float, time_in_force: str, exit_reason: str,
