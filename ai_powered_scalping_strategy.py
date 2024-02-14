@@ -11,6 +11,7 @@ from freqtrade.strategy import (IStrategy)
 # --------------------------------
 # Add your lib to import here
 import talib.abstract as ta
+from freqtrade.strategy.parameters import IntParameter
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 from datetime import datetime, timedelta, timezone
 from freqtrade.exchange import timeframe_to_prev_date
@@ -52,14 +53,23 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     # ===================== STC Scalping Strategy =================
     # =============================================================
+    stc_length_buy = IntParameter(2,50,default=12,space="buy",optimize=True)
+    stc_fastLength_buy = IntParameter(5,50,default=26,space="buy",optimize=True)
+    stc_slowLength_buy = IntParameter(10,80,default=50,space="buy",optimize=True)
+
+    stc_length_sell = IntParameter(2,50,default=12,space="sell",optimize=True)
+    stc_fastLength_sell = IntParameter(5,50,default=26,space="sell",optimize=True)
+    stc_slowLength_sell = IntParameter(10,80,default=50,space="sell",optimize=True)
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe = self.calculateIndicator(dataframe)
-        dataframe['stc_signal'] = self.calculateSTCIndicator(dataframe,12,26,50)
+        dataframe['stc_signal_buy'] = self.calculateSTCIndicator(dataframe,self.stc_length_buy.value,self.stc_fastLength_buy.value,self.stc_slowLength_buy.value)
+        dataframe['stc_signal_sell'] = self.calculateSTCIndicator(dataframe,self.stc_length_sell.value,self.stc_fastLength_sell.value,self.stc_slowLength_sell.value)
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition =  (dataframe['predicted_value'] == 5) & (dataframe['stc_signal'] == 1)
-        sell_condition = (dataframe['predicted_value'] == -5) & (dataframe['stc_signal'] == -1)
+        buy_condition =  (dataframe['predicted_value'] > 0) & (dataframe['stc_signal_buy'] == 1)
+        sell_condition = (dataframe['predicted_value'] < 0) & (dataframe['stc_signal_sell'] == -1)
         dataframe.loc[
             (
                 buy_condition
@@ -131,7 +141,7 @@ class AIPoweredScalpingStrategy(IStrategy):
         # is_the_best_time_to_trade = True
         if(is_the_best_time_to_trade) & (current_profit > 0) & is_the_best_time_to_trade:
             return 'sell'
-        if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds >= 180) & is_the_best_time_to_trade:
+        if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds > 500) & is_the_best_time_to_trade:
             return 'stopsell'
     
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
