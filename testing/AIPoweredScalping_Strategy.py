@@ -1,13 +1,9 @@
 from functools import reduce
+import sched
+import time
 import numpy as np  # noqa
 import pandas as pd  # noqa
 from pandas import DataFrame
-from sklearn import preprocessing
-from sklearn.base import accuracy_score
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.naive_bayes import GaussianNB
-from sklearn.neighbors import KNeighborsClassifier
 from freqtrade.persistence import Trade
 from typing import Optional
 from freqtrade.strategy import (IStrategy)
@@ -15,11 +11,20 @@ from freqtrade.strategy import (IStrategy)
 # --------------------------------
 # Add your lib to import here
 import talib.abstract as ta
+from freqtrade.strategy.parameters import IntParameter
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 from datetime import datetime, timedelta, timezone
 from freqtrade.exchange import timeframe_to_prev_date
-from freqtrade.strategy.parameters import IntParameter
 from technical.util import resample_to_interval,resampled_merge
+import ccxt
+import matplotlib.pyplot as plt
+from sklearn import preprocessing
+from sklearn.ensemble import VotingClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.naive_bayes import GaussianNB
 
 class AIPoweredScalpingStrategy(IStrategy):
 
@@ -29,7 +34,7 @@ class AIPoweredScalpingStrategy(IStrategy):
     INTERFACE_VERSION = 3
     can_short: bool = True
     timeframe = '1m'
-    stoploss = -0.1
+    stoploss = -0.04
     process_only_new_candles = True
     use_exit_signal = True
     exit_profit_only = False
@@ -42,15 +47,36 @@ class AIPoweredScalpingStrategy(IStrategy):
     }
 
     # =============================================================
-    # ===================== STC Scalping Strategy ==================
+    # ===================== STC Scalping Strategy =================
     # =============================================================
+    stc_length_buy = IntParameter(2,50,default=12,space="buy",optimize=True)
+    stc_fastLength_buy = IntParameter(5,50,default=26,space="buy",optimize=True)
+    stc_slowLength_buy = IntParameter(10,80,default=50,space="buy",optimize=True)
+
+    stc_length_sell = IntParameter(2,50,default=12,space="sell",optimize=True)
+    stc_fastLength_sell = IntParameter(5,50,default=26,space="sell",optimize=True)
+    stc_slowLength_sell = IntParameter(10,80,default=50,space="sell",optimize=True)
+
+    Sensitivity_buy = IntParameter(1,5,default=1,space="buy",optimize=True)
+    Atr_period_buy = IntParameter(10,80,default=10,space="buy",optimize=True)
+
+    Sensitivity_sell = IntParameter(1,5,default=1,space="sell",optimize=True)
+    Atr_period_sell = IntParameter(10,80,default=10,space="sell",optimize=True)
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe = self.calculateIndicator(dataframe)
+        dataframe['predicted_value'] = self.predictSVM(dataframe)
+        dataframe['ut_signal_buy'] = self.calculate_ut_bot(dataframe,self.Sensitivity_buy.value,self.Atr_period_buy.value)
+        dataframe['ut_signal_sell'] = self.calculate_ut_bot(dataframe,self.Sensitivity_sell.value,self.Atr_period_sell.value)
+        # dataframe['stc_signal_buy'] = self.calculateSTCIndicator(dataframe,self.stc_length_buy.value,self.stc_fastLength_buy.value,self.stc_slowLength_buy.value)
+        # dataframe['stc_signal_sell'] = self.calculateSTCIndicator(dataframe,self.stc_length_sell.value,self.stc_fastLength_sell.value,self.stc_slowLength_sell.value)
+        print(dataframe.loc[len(dataframe)-20:,['date','predicted_value','close']])
+        print(datetime.now())
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition =  dataframe['predicted_value'] == 'up'
-        sell_condition = dataframe['predicted_value'] == 'down'
+        buy_condition = (dataframe['predicted_value'] > 0) & (dataframe['ut_signal_buy'] == 1)
+        sell_condition = (dataframe['predicted_value'] < 0) & (dataframe['ut_signal_sell'] == -1)
+
         dataframe.loc[
             (
                 buy_condition
@@ -65,8 +91,8 @@ class AIPoweredScalpingStrategy(IStrategy):
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition = (dataframe['predicted_value'] == '3')
-        sell_condition = (dataframe['predicted_value'] == '3')
+        buy_condition =  (dataframe['predicted_value'] > 0) & (dataframe['ut_signal_buy'] == 1)
+        sell_condition = (dataframe['predicted_value'] < 0) & (dataframe['ut_signal_sell'] == -1)
 
         dataframe.loc[
             (
@@ -101,94 +127,94 @@ class AIPoweredScalpingStrategy(IStrategy):
         # df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         # last_candle = df.iloc[-1].squeeze()
 
-        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
-        # # & (last_candle['resample_5_stc_signal_buy'] == 1)
-        # should_buy_or_not_in_5m = (rate < last_candle['close']) & (rate < last_candle['resample_5_resample_5_close'])  & is_the_best_time_to_trade
-        # should_sell_or_not_in_5m = (rate > last_candle['close']) & (rate > last_candle['resample_5_resample_5_close']) & is_the_best_time_to_trade
+        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
 
-        # # istrue = self.count_digits_in_float(rate) == self.count_digits_in_float(last_candle['close'])
-
-        # if ((side == "long") & should_buy_or_not_in_5m):              
-        #     return True
-        # elif ((side == "short") & should_sell_or_not_in_5m): 
-        #     return True
+        if side == "long" and is_the_best_time_to_trade:              
+            return True
+        elif side == "short" and is_the_best_time_to_trade: 
+            return True
         
-        return True
+        return False
     
     def custom_exit(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
                     current_profit: float, **kwargs):
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        last_candle = dataframe.iloc[-1].squeeze()
+        # dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        # last_candle = dataframe.iloc[-1].squeeze()
 
-        trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
-        trade_candle = dataframe.loc[dataframe['date'] == trade_date]
+        # trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
+        # trade_candle = dataframe.loc[dataframe['date'] == trade_date]
 
-        if(current_profit > 0):
+        if (current_profit > 0):
             return 'sell'
-        
+        if (current_profit < 0) & ((current_time - trade.open_date_utc).seconds > 500):
+            return 'stopsell'
+    
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
-                            rate: float, time_in_force: str, exit_reason: str,
-                            current_time: datetime, **kwargs) -> bool:
-        return True
+                           rate: float, time_in_force: str, exit_reason: str,
+                           current_time: datetime, **kwargs) -> bool:
+        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        is_the_best_time_to_trade = True
+        if is_the_best_time_to_trade:
+            return True
+
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
                  side: str, **kwargs) -> float:
         return 20
+    
+    @property
+    def protections(self):
+        return [
+            {
+                "method": "CooldownPeriod",
+                "stop_duration_candles": 0
+            },
+            {
+                "method": "MaxDrawdown",
+                "lookback_period_candles": 48,
+                "trade_limit": 20,
+                "stop_duration_candles": 0,
+                "max_allowed_drawdown": 0.2
+            },
+            {
+                "method": "StoplossGuard",
+                "lookback_period_candles": 24,
+                "trade_limit": 4,
+                "stop_duration_candles": 0,
+                "only_per_pair": False
+            },
+            {
+                "method": "LowProfitPairs",
+                "lookback_period_candles": 6,
+                "trade_limit": 2,
+                "stop_duration_candles": 0,
+                "required_profit": 0.02
+            },
+            {
+                "method": "LowProfitPairs",
+                "lookback_period_candles": 24,
+                "trade_limit": 4,
+                "stop_duration_candles": 0,
+                "required_profit": 0.01
+            }
+        ]
 
     # =============================================================
     # ===================== Helper Function =======================
     # =============================================================
-    def ExtractAndReturnNewDataframe(self,dataframe):
-        dataframe['date'] = dataframe['resample_5_date']
-        dataframe['open'] = dataframe['resample_5_open']
-        dataframe['high'] = dataframe['resample_5_high']
-        dataframe['low'] = dataframe['resample_5_low']
-        dataframe['close'] = dataframe['resample_5_close']
-        dataframe['volume'] = dataframe['resample_5_volume']
-        return dataframe
-
-    def addzeroontheend(self,value):
-        original_float_str = str(value)
-        modified_float_str = original_float_str + '0'
-        return modified_float_str
-
     def is_quarter_hour(self,time:datetime):
-        minutes = time.minute
         seconds = time.second
-        return (seconds <= 50) & (seconds >= 30) & (minutes in [2,7,12,17,22,27,32,37,42,47,52,57])
-
+        minutes = time.minute
+        return (0 <= seconds < 3)
+    
     def get_ticker_indicator(self):
         return int(self.timeframe[:-1])
     
-    def calculate5mintimeframe(self,dataframe):
-        dataframe_short = resample_to_interval(dataframe, self.get_ticker_indicator() * 5)
-        dataframe = resampled_merge(dataframe, dataframe_short)
-        return dataframe , dataframe_short
-
-    def count_digits_in_float(self,num):
-        if isinstance(num, float):
-            num_str = str(num)
-            integer_part, _, fractional_part = num_str.partition('.')
-            return len(integer_part) + len(fractional_part)
-        else:
-            return 0
-        
-    def add_deviation(self,number,isShort,deviation):
-        num_str = str(number)
-        integer_part, decimal_part = num_str.split('.')
-        last_two_digits = decimal_part[-2:]
-        last_two_digits_int = int(last_two_digits)
-        new_last_two_digits = 0
-        if isShort == False:
-            new_last_two_digits = str(last_two_digits_int + deviation).zfill(2)
-        if isShort == True:
-            new_last_two_digits = str(last_two_digits_int - deviation).zfill(2)
-        new_last_two_digits = new_last_two_digits.replace("-","")
-        new_decimal_part = decimal_part[:-2] + new_last_two_digits
-        new_number_str = integer_part + '.' + new_decimal_part
-        new_number = float(new_number_str)
-        return new_number
+    def calculateBigTimeTrame(self,dataframe,minutes):
+        big_timeframe = resample_to_interval(dataframe, self.get_ticker_indicator() * minutes)
+        dataframe = resampled_merge(dataframe, big_timeframe)
+        return dataframe
     
     # =============================================================
     # ===================== Machine Learning Helper ===============
@@ -266,16 +292,14 @@ class AIPoweredScalpingStrategy(IStrategy):
         
         return ((current_mom - lo) / (hi - lo)) * 100
 
-    def calculate_sm1(self,s):
-        result = []
-        for value in s:
-            result.append(value if value >= 0 else 0.0)
+    def calculate_sm1(self, s):
+        s = np.array(s)  # Convert s to a NumPy array
+        result = np.maximum(s, 0.0)
         return np.sum(result)
 
-    def calculate_sm2(self,s):
-        result = []
-        for value in s:
-            result.append(0.0 if value >= 0 else -value)
+    def calculate_sm2(self, s):
+        s = np.array(s)  # Convert s to a NumPy array
+        result = np.where(s >= 0, 0.0, -s)
         return np.sum(result)
 
     def calculate_mfi_upper(self,s,x):
@@ -302,21 +326,42 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     # ===================== Machine Learning ======================
     # =============================================================
-    def calculateIndicator(self,dataframe):
-        LongWindow = 59
-        MediumWindow = 28
-        ShortWindow = 14
+    def trainAndLearnSVM(self,features,output):
+
+        data_combined = pd.concat([features, output], axis=1)
+        data_combined.dropna(inplace=True)
+
+        X = data_combined[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']]
+        y = np.where(data_combined['output'].shift(1) > 0,1,-1)
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=37)
+
+        # Step 2: Model Selection
+        knn_model = KNeighborsClassifier(n_neighbors=1)
+        gnb_model = GaussianNB()
+        random_forest_model = RandomForestClassifier(n_estimators=15, random_state=37)
+
+        model = VotingClassifier(
+                                estimators=[
+                                    ('knn', knn_model),
+                                    ('rf', random_forest_model),
+                                    ('gnb', gnb_model)
+                                ], 
+                                voting='soft',
+                                )
+
+        # Step 3: Model Training
+        model.fit(X_train, y_train)
+        return model
+    
+    def extractFeatures(self,dataframe):
+        LongWindow = 15
+        MediumWindow = 5
+        ShortWindow = 2
 
         dataframe_copy = dataframe
         # Input Source
-        source = dataframe_copy['open']+dataframe_copy['high']+dataframe_copy['low']/3
-
-        # DIFF
-        dataframe_copy['mas'] = ta.SMA(source,timeperiod=LongWindow)
-        dataframe_copy['diffs'] = source - dataframe_copy['mas']
-
-        dataframe_copy['maf'] = ta.SMA(source,timeperiod=ShortWindow)
-        dataframe_copy['difff'] = source - dataframe_copy['maf']
+        source = dataframe_copy['close']
 
         # ============ Long Window ============
         dataframe_copy['os'] = ta.ROC(source,timeperiod=LongWindow)
@@ -333,54 +378,199 @@ class AIPoweredScalpingStrategy(IStrategy):
         dataframe_copy['cmof'] = self.pine_cmo(source,ShortWindow)
         dataframe_copy['emaf'] = ta.EMA(dataframe_copy,timeperiod=ShortWindow)
 
-        dataframe_copy['f1'] = dataframe_copy.loc[:,['os','om','of']].mean(axis=1)
-        dataframe_copy['f2'] = dataframe_copy.loc[:,['emas','emam','emaf']].mean(axis=1)
-        dataframe_copy['f3'] = dataframe_copy.loc[:,['cmos','cmom','cmof']].mean(axis=1)
-        dataframe_copy['output'] = dataframe_copy["close"].shift(-10) - dataframe_copy["close"]
+        dataframe_copy['f1'] = dataframe_copy.loc[:,['os','emas','cmos','rs']].mean(axis=1)
+        dataframe_copy['f2'] = dataframe_copy.loc[:,['om','emam','cmom','rm']].mean(axis=1)
+        dataframe_copy['f3'] = dataframe_copy.loc[:,['of','emaf','cmof','rf']].mean(axis=1)
+        dataframe_copy['output'] = dataframe_copy["close"].shift(-1) - dataframe_copy["close"]
 
         min_max_scaler = preprocessing.MinMaxScaler()
         dataframe_copy[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']] = min_max_scaler.fit_transform(dataframe_copy[['f1','f2','f3']])
 
-        # Core Data
         # Step 1: Data Preparation
         features = dataframe_copy[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize','date','close']]
         output = dataframe_copy[['output']]
+        return features,output
 
-        data_combined = pd.concat([features, output], axis=1)
-        data_for_prediction = features.loc[len(features)-10:].copy()
-        data_combined.dropna(inplace=True)
-
-        X = data_combined[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']]
-        y = np.where(data_combined['output'] > 0,'up','down')
-
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=37)
-
-        # Step 2: Model Selection
-        knn_model = KNeighborsClassifier(n_neighbors=1)
-        gnb_model = GaussianNB()
-        random_forest_model = RandomForestClassifier(n_estimators=15, random_state=20)
-
-        model = VotingClassifier(
-                                estimators=[
-                                    ('knn', knn_model),
-                                    ('rf', random_forest_model),
-                                    ('gnb', gnb_model)
-                                ], 
-                                voting='soft',
-                                )
-
-        # Step 3: Model Training
-        model.fit(X_train, y_train)
-
-        # Step 4: Model Evaluation
-        y_pred = model.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred)
-        print("Accuracy:", accuracy)
-
-        # Step 5: Prediction
-        # Assuming X_new is your new data for prediction
+    def predictSVM(self,dataframe):
+        features , output = self.extractFeatures(dataframe)
+        data_for_prediction = dataframe.loc[len(features)-10:].copy()
         data_for_prediction = pd.concat([dataframe], axis=1)
         data_for_prediction.fillna(0,inplace=True)
-        data_for_prediction['predicted_value'] = model.predict(data_for_prediction[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']])
-        print(data_for_prediction.loc[len(data_for_prediction)-10:,['date','predicted_value','close']])
-        return data_for_prediction
+        
+        model = self.trainAndLearnSVM(features,output)
+    
+        # Step 5: Prediction
+        data_for_prediction['last_10_predicted_value'] = model.predict(data_for_prediction[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']])
+        data_for_prediction['predicted_value'] = data_for_prediction['last_10_predicted_value'] + data_for_prediction['last_10_predicted_value'].shift(-1) + data_for_prediction['last_10_predicted_value'].shift(-2)
+        data_for_prediction['predicted_value'] = data_for_prediction['predicted_value'].shift(3)
+        return data_for_prediction['predicted_value']
+    
+    # =============================================================
+    # ===================== STC Indicator =========================
+    # =============================================================
+    def calculateSTCIndicator(self,dataframe,length,fastLength,slowLength):
+        EEEEEE = length
+        BBBB = fastLength
+        BBBBB = slowLength
+        mAAAAA = self.AAAAA(dataframe,EEEEEE, BBBB, BBBBB)
+        return mAAAAA
+
+    
+    def AAAA(self,BBB, BBBB, BBBBB):
+        fastMA = ta.EMA(BBB, timeperiod=BBBB)
+        slowMA = ta.EMA(BBB, timeperiod=BBBBB)
+        AAAA = fastMA - slowMA
+        return AAAA
+
+    def AAAAA(self,dataframe,EEEEEE, BBBB, BBBBB):
+
+        AAA = 0.5
+        dataframe['DDD'] = 0.0
+        dataframe['CCCCC'] = 0
+        dataframe['DDDDDD'] = 0
+        dataframe['EEEEE'] = 0.0
+        
+        dataframe['BBBBBB'] = self.AAAA(dataframe['close'], BBBB, BBBBB)
+        dataframe['CCC'] = dataframe['BBBBBB'].rolling(window=EEEEEE).min()
+        dataframe['CCCC'] = dataframe['BBBBBB'].rolling(window=EEEEEE).max() - dataframe['CCC']
+        dataframe['CCCCC'] = np.where(dataframe['CCCC'] > 0, (dataframe['BBBBBB'] - dataframe['CCC']) / dataframe['CCCC'] * 100, dataframe['CCCCC'].shift(1).fillna(0))
+
+        for i in range(0, len(dataframe)):
+            if(i>0):
+                dataframe.at[i, 'DDD'] = dataframe['DDD'].iloc[i-1] + (AAA * (dataframe.at[i, 'CCCCC'] - dataframe['DDD'].iloc[i-1]))
+
+        dataframe['DDDD'] = dataframe['DDD'].rolling(window=EEEEEE).min()
+        dataframe['DDDDD'] = dataframe['DDD'].rolling(window=EEEEEE).max() - dataframe['DDDD']
+        dataframe['DDDDDD'] = np.where(dataframe['DDD'] > 0, (dataframe['DDD'] - dataframe['DDDD']) / dataframe['DDDDD'] * 100 , dataframe['DDD'].fillna(dataframe['DDDDDD'].shift(1)))
+
+        for i in range(0, len(dataframe)):
+            if(i>0):
+                dataframe.at[i, 'EEEEE'] = dataframe['EEEEE'].iloc[i-1] + (AAA * (dataframe.at[i, 'DDDDDD'] - dataframe['EEEEE'].iloc[i-1]))
+
+        dataframe.loc[
+            (
+                (dataframe['EEEEE'] > dataframe['EEEEE'].shift(1))
+            ),
+            'stc_signal'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe['EEEEE'] < dataframe['EEEEE'].shift(1))
+            ),
+            'stc_signal'] = -1
+        
+        dataframe.loc[
+            (
+                (dataframe['stc_signal'] == 1)
+                &
+                (dataframe['stc_signal'].shift(1) == -1)
+            ),
+            'stc_entry_exit'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe['stc_signal'] == -1)
+                &
+                (dataframe['stc_signal'].shift(1) == 1)
+            ),
+            'stc_entry_exit'] = -1
+        
+        return dataframe['stc_signal']
+    
+    # =============================================================
+    # ===================== UT Bot ================================
+    # =============================================================
+    def xATRTrailingStop_func(self,close, prev_close, prev_atr, nloss):
+        if close > prev_atr and prev_close > prev_atr:
+            return max(prev_atr, close - nloss)
+        elif close < prev_atr and prev_close < prev_atr:
+            return min(prev_atr, close + nloss)
+        elif close > prev_atr:
+            return close - nloss
+        else:
+            return close + nloss
+        
+    def calculateEMA(self,src, length):
+        alpha = 2 / (length + 1)
+        
+        # Initialize sum with the Simple Moving Average (SMA) for the first value
+        sma_first_value = src.head(length).mean()
+        sum_value = sma_first_value
+        
+        ema_values = []
+        
+        for value in src:
+            if pd.isna(sum_value):
+                sum_value = sma_first_value
+            else:
+                sum_value = alpha * value + (1 - alpha) * sum_value
+            
+            ema_values.append(sum_value)
+        
+        return pd.Series(ema_values, index=src.index)
+
+    def heikinashi(self,df: pd.DataFrame) -> pd.DataFrame:
+        df_HA = df.copy()
+        df_HA['close'] = (df_HA['open'] + df_HA['high'] + df_HA['low'] + df_HA['close']) / 4
+
+        for i in range(0, len(df_HA)):
+            if i == 0:
+                df_HA.loc[i, 'open'] = ((df_HA.loc[i, 'open'] + df_HA.loc[i, 'close']) / 2)
+            else:
+                df_HA.loc[i, 'open'] = ((df_HA.loc[i-1, 'open'] + df_HA.loc[i-1, 'close']) / 2)
+
+        df_HA['high'] = df_HA[['open', 'close', 'high']].max(axis=1)
+        df_HA['low'] = df_HA[['open', 'close', 'low']].min(axis=1)
+        
+        return df_HA
+
+    def calculate_ut_bot(self,dataframe,SENSITIVITY,ATR_PERIOD):
+        # UT Bot Parameters
+        SENSITIVITY = SENSITIVITY
+        ATR_PERIOD = ATR_PERIOD
+
+        # dataframe = self.heikinashi(dataframe)
+
+        # Compute ATR And nLoss variable
+        dataframe["xATR"] = ta.ATR(dataframe["high"], dataframe["low"], dataframe["close"], timeperiod=ATR_PERIOD)
+        dataframe["nLoss"] = SENSITIVITY * dataframe["xATR"]
+
+        #Drop all rows that have nan, X first depending on the ATR preiod for the moving average
+        # dataframe = dataframe.dropna()
+        # dataframe = dataframe.reset_index()
+
+        dataframe["ATRTrailingStop"] = [0.0] + [np.nan for i in range(len(dataframe) - 1)]
+
+        for i in range(1, len(dataframe)):
+            dataframe.loc[i, "ATRTrailingStop"] = self.xATRTrailingStop_func(
+                dataframe.loc[i, "close"],
+                dataframe.loc[i - 1, "close"],
+                dataframe.loc[i - 1, "ATRTrailingStop"],
+                dataframe.loc[i, "nLoss"],
+            )
+
+        dataframe['Ema'] = self.calculateEMA(dataframe['close'],1)
+        dataframe["Above"] = self.calculate_crossover(dataframe['Ema'],dataframe["ATRTrailingStop"])
+        dataframe["Below"] = self.calculate_crossover(dataframe["ATRTrailingStop"],dataframe['Ema'])
+
+        # Buy Signal
+        dataframe.loc[
+            (
+                (dataframe["close"] > dataframe["ATRTrailingStop"]) 
+                & 
+                (dataframe["Above"]==True)
+            ),
+            'UT_Signal'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe["close"] < dataframe["ATRTrailingStop"]) 
+                & 
+                (dataframe["Below"]==True)
+            ),
+            'UT_Signal'] = -1
+        
+        return dataframe['UT_Signal']
+
+    def calculate_crossover(self,source1,source2):
+        return (source1 > source2) & (source1.shift(1) <= source2.shift(1))
