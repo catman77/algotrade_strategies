@@ -35,10 +35,6 @@ class AIPoweredScalpingStrategy(IStrategy):
     can_short: bool = True
     timeframe = '1m'
     stoploss = -1
-    trailing_stop = True
-    trailing_stop_positive = 0.0001
-    trailing_stop_positive_offset = 0.002
-    trailing_only_offset_is_reached = True
     process_only_new_candles = True
     use_exit_signal = True
     exit_profit_only = False
@@ -61,15 +57,23 @@ class AIPoweredScalpingStrategy(IStrategy):
     stc_fastLength_sell = IntParameter(5,50,default=26,space="sell",optimize=True)
     stc_slowLength_sell = IntParameter(10,80,default=50,space="sell",optimize=True)
 
+    Sensitivity_buy = IntParameter(1,5,default=1,space="buy",optimize=True)
+    Atr_period_buy = IntParameter(10,80,default=10,space="buy",optimize=True)
+
+    Sensitivity_sell = IntParameter(1,5,default=1,space="sell",optimize=True)
+    Atr_period_sell = IntParameter(10,80,default=10,space="sell",optimize=True)
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe = self.calculateIndicator(dataframe)
+        dataframe['predicted_value'] = self.calculateIndicator(dataframe)
+        dataframe['ut_signal_buy'] = self.calculate_ut_bot(dataframe,self.Sensitivity_buy.value,self.Atr_period_buy.value)
+        dataframe['ut_signal_sell'] = self.calculate_ut_bot(dataframe,self.Sensitivity_sell.value,self.Atr_period_sell.value)
         dataframe['stc_signal_buy'] = self.calculateSTCIndicator(dataframe,self.stc_length_buy.value,self.stc_fastLength_buy.value,self.stc_slowLength_buy.value)
         dataframe['stc_signal_sell'] = self.calculateSTCIndicator(dataframe,self.stc_length_sell.value,self.stc_fastLength_sell.value,self.stc_slowLength_sell.value)
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition =  (dataframe['predicted_value'] == 5) & (dataframe['stc_signal_buy'] == 1)
-        sell_condition = (dataframe['predicted_value'] == -5) & (dataframe['stc_signal_sell'] == -1)
+        buy_condition =  (dataframe['predicted_value'] > 1) & (dataframe['stc_signal_buy'] == 1) & (dataframe['ut_signal_buy'] == 1)
+        sell_condition = (dataframe['predicted_value'] < -1) & (dataframe['stc_signal_sell'] == -1) & (dataframe['ut_signal_sell'] == -1)
         dataframe.loc[
             (
                 buy_condition
@@ -84,8 +88,8 @@ class AIPoweredScalpingStrategy(IStrategy):
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition =  dataframe['predicted_value'] == 20
-        sell_condition = dataframe['predicted_value'] == 20
+        buy_condition =  (dataframe['predicted_value'] > 1)
+        sell_condition = (dataframe['predicted_value'] < -1)
 
         dataframe.loc[
             (
@@ -120,8 +124,7 @@ class AIPoweredScalpingStrategy(IStrategy):
         # df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         # last_candle = df.iloc[-1].squeeze()
 
-        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
-        is_the_best_time_to_trade = True
+        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
 
         if side == "long" and is_the_best_time_to_trade:              
             return True
@@ -130,24 +133,25 @@ class AIPoweredScalpingStrategy(IStrategy):
         
         return False
     
-    def custom_exit(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
-                    current_profit: float, **kwargs):
-        # dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        # last_candle = dataframe.iloc[-1].squeeze()
+    # def custom_exit(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
+    #                 current_profit: float, **kwargs):
+    #     dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+    #     last_candle = dataframe.iloc[-1].squeeze()
 
-        # trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
-        # trade_candle = dataframe.loc[dataframe['date'] == trade_date]
-        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
-        # is_the_best_time_to_trade = True
-        # if(is_the_best_time_to_trade) & (current_profit > 0) & is_the_best_time_to_trade:
-        #     return 'sell'
-        # if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds > 500) & is_the_best_time_to_trade:
-        #     return 'stopsell'
+    #     trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
+    #     trade_candle = dataframe.loc[dataframe['date'] == trade_date]
+    #     is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+    #     is_the_best_time_to_trade = True
+    #     if(is_the_best_time_to_trade) & (current_profit > 0) & is_the_best_time_to_trade:
+    #         return 'sell'
+    #     if(is_the_best_time_to_trade) & (current_profit < 0) & ((current_time - trade.open_date_utc).seconds > 500) & is_the_best_time_to_trade:
+    #         return 'stopsell'
     
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time: datetime, **kwargs) -> bool:
-        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        is_the_best_time_to_trade = True
         if is_the_best_time_to_trade:
             # with open("output.txt", "a") as f:
             #     f.write("\n")
@@ -395,7 +399,7 @@ class AIPoweredScalpingStrategy(IStrategy):
         data_for_prediction['last_10_predicted_value'] = model.predict(data_for_prediction[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']])
         data_for_prediction['predicted_value'] = data_for_prediction['last_10_predicted_value'] + data_for_prediction['last_10_predicted_value'].shift(-1) + data_for_prediction['last_10_predicted_value'].shift(-2) + data_for_prediction['last_10_predicted_value'].shift(-3) + data_for_prediction['last_10_predicted_value'].shift(-4)
         data_for_prediction['predicted_value'] = data_for_prediction['predicted_value'].shift(10)
-        return data_for_prediction
+        return data_for_prediction['predicted_value']
     
     # =============================================================
     # ===================== STC Indicator =========================
@@ -468,3 +472,101 @@ class AIPoweredScalpingStrategy(IStrategy):
             'stc_entry_exit'] = -1
         
         return dataframe['stc_entry_exit']
+    
+    # =============================================================
+    # ===================== UT Bot ================================
+    # =============================================================
+    def xATRTrailingStop_func(self,close, prev_close, prev_atr, nloss):
+        if close > prev_atr and prev_close > prev_atr:
+            return max(prev_atr, close - nloss)
+        elif close < prev_atr and prev_close < prev_atr:
+            return min(prev_atr, close + nloss)
+        elif close > prev_atr:
+            return close - nloss
+        else:
+            return close + nloss
+        
+    def calculateEMA(self,src, length):
+        alpha = 2 / (length + 1)
+        
+        # Initialize sum with the Simple Moving Average (SMA) for the first value
+        sma_first_value = src.head(length).mean()
+        sum_value = sma_first_value
+        
+        ema_values = []
+        
+        for value in src:
+            if pd.isna(sum_value):
+                sum_value = sma_first_value
+            else:
+                sum_value = alpha * value + (1 - alpha) * sum_value
+            
+            ema_values.append(sum_value)
+        
+        return pd.Series(ema_values, index=src.index)
+
+    def heikinashi(self,df: pd.DataFrame) -> pd.DataFrame:
+        df_HA = df.copy()
+        df_HA['close'] = (df_HA['open'] + df_HA['high'] + df_HA['low'] + df_HA['close']) / 4
+
+        for i in range(0, len(df_HA)):
+            if i == 0:
+                df_HA.loc[i, 'open'] = ((df_HA.loc[i, 'open'] + df_HA.loc[i, 'close']) / 2)
+            else:
+                df_HA.loc[i, 'open'] = ((df_HA.loc[i-1, 'open'] + df_HA.loc[i-1, 'close']) / 2)
+
+        df_HA['high'] = df_HA[['open', 'close', 'high']].max(axis=1)
+        df_HA['low'] = df_HA[['open', 'close', 'low']].min(axis=1)
+        
+        return df_HA
+
+    def calculate_ut_bot(self,dataframe,SENSITIVITY,ATR_PERIOD):
+        # UT Bot Parameters
+        SENSITIVITY = SENSITIVITY
+        ATR_PERIOD = ATR_PERIOD
+
+        # dataframe = self.heikinashi(dataframe)
+
+        # Compute ATR And nLoss variable
+        dataframe["xATR"] = ta.ATR(dataframe["high"], dataframe["low"], dataframe["close"], timeperiod=ATR_PERIOD)
+        dataframe["nLoss"] = SENSITIVITY * dataframe["xATR"]
+
+        #Drop all rows that have nan, X first depending on the ATR preiod for the moving average
+        # dataframe = dataframe.dropna()
+        # dataframe = dataframe.reset_index()
+
+        dataframe["ATRTrailingStop"] = [0.0] + [np.nan for i in range(len(dataframe) - 1)]
+
+        for i in range(1, len(dataframe)):
+            dataframe.loc[i, "ATRTrailingStop"] = self.xATRTrailingStop_func(
+                dataframe.loc[i, "close"],
+                dataframe.loc[i - 1, "close"],
+                dataframe.loc[i - 1, "ATRTrailingStop"],
+                dataframe.loc[i, "nLoss"],
+            )
+
+        dataframe['Ema'] = self.calculateEMA(dataframe['close'],1)
+        dataframe["Above"] = self.calculate_crossover(dataframe['Ema'],dataframe["ATRTrailingStop"])
+        dataframe["Below"] = self.calculate_crossover(dataframe["ATRTrailingStop"],dataframe['Ema'])
+
+        # Buy Signal
+        dataframe.loc[
+            (
+                (dataframe["close"] > dataframe["ATRTrailingStop"]) 
+                & 
+                (dataframe["Above"]==True)
+            ),
+            'UT_Signal'] = 1
+        
+        dataframe.loc[
+            (
+                (dataframe["close"] < dataframe["ATRTrailingStop"]) 
+                & 
+                (dataframe["Below"]==True)
+            ),
+            'UT_Signal'] = -1
+        
+        return dataframe['UT_Signal']
+
+    def calculate_crossover(self,source1,source2):
+        return (source1 > source2) & (source1.shift(1) <= source2.shift(1))
