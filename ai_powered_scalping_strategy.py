@@ -30,7 +30,7 @@ class AIPoweredScalpingStrategy(IStrategy):
     can_short: bool = True
     timeframe = '1m'
     stoploss = -0.05
-    process_only_new_candles = True
+    process_only_new_candles = False
     use_exit_signal = True
     exit_profit_only = False
     startup_candle_count: int = 60
@@ -44,13 +44,13 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     # ===================== STC Scalping Strategy =================
     # =============================================================
-    stc_length_buy = IntParameter(2,50,default=12,space="buy",optimize=True)
-    stc_fastLength_buy = IntParameter(5,50,default=26,space="buy",optimize=True)
-    stc_slowLength_buy = IntParameter(10,80,default=50,space="buy",optimize=True)
+    stc_length_buy = IntParameter(2,50,default=50,space="buy",optimize=True)
+    stc_fastLength_buy = IntParameter(5,50,default=29,space="buy",optimize=True)
+    stc_slowLength_buy = IntParameter(10,80,default=80,space="buy",optimize=True)
 
-    stc_length_sell = IntParameter(2,50,default=12,space="sell",optimize=True)
-    stc_fastLength_sell = IntParameter(5,50,default=26,space="sell",optimize=True)
-    stc_slowLength_sell = IntParameter(10,80,default=50,space="sell",optimize=True)
+    stc_length_sell = IntParameter(2,50,default=50,space="sell",optimize=True)
+    stc_fastLength_sell = IntParameter(5,50,default=29,space="sell",optimize=True)
+    stc_slowLength_sell = IntParameter(10,80,default=80,space="sell",optimize=True)
 
     Sensitivity_buy = IntParameter(1,5,default=1,space="buy",optimize=True)
     Atr_period_buy = IntParameter(10,80,default=10,space="buy",optimize=True)
@@ -64,11 +64,12 @@ class AIPoweredScalpingStrategy(IStrategy):
         dataframe['ut_signal_sell'] = self.calculate_ut_bot(dataframe,self.Sensitivity_sell.value,self.Atr_period_sell.value)
         # dataframe['stc_signal_buy'] = self.calculateSTCIndicator(dataframe,self.stc_length_buy.value,self.stc_fastLength_buy.value,self.stc_slowLength_buy.value)
         # dataframe['stc_signal_sell'] = self.calculateSTCIndicator(dataframe,self.stc_length_sell.value,self.stc_fastLength_sell.value,self.stc_slowLength_sell.value)
+        print(dataframe.loc[len(dataframe)-20:,['date','predicted_value','ut_signal_buy','close']])
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition = (dataframe['predicted_value'] > 1) & (dataframe['ut_signal_buy'] == 1)
-        sell_condition = (dataframe['predicted_value'] < -1) & (dataframe['ut_signal_sell'] == -1)
+        buy_condition = (dataframe['ut_signal_buy'] == 1) & (dataframe['predicted_value'] > 0)
+        sell_condition = (dataframe['ut_signal_sell'] == -1) & (dataframe['predicted_value'] < 0)
 
         dataframe.loc[
             (
@@ -84,8 +85,8 @@ class AIPoweredScalpingStrategy(IStrategy):
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition =  (dataframe['predicted_value'] > 1) & (dataframe['ut_signal_buy'] == 1)
-        sell_condition = (dataframe['predicted_value'] < -1) & (dataframe['ut_signal_sell'] == -1)
+        buy_condition = (dataframe['ut_signal_buy'] == 1) & (dataframe['predicted_value'] > 0)
+        sell_condition = (dataframe['ut_signal_sell'] == -1) & (dataframe['predicted_value'] < 0)
 
         dataframe.loc[
             (
@@ -116,7 +117,8 @@ class AIPoweredScalpingStrategy(IStrategy):
         **kwargs,
     ) -> bool:
 
-        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        is_the_best_time_to_trade = True
 
         if side == "long" and is_the_best_time_to_trade:              
             return True
@@ -132,9 +134,9 @@ class AIPoweredScalpingStrategy(IStrategy):
 
         # trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
         # trade_candle = dataframe.loc[dataframe['date'] == trade_date]
-        is_the_best_time_to_trade = self.is_quarter_hour(current_time)
+        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
 
-        if (trade.calc_profit_ratio(current_rate) > 0) & (is_the_best_time_to_trade):
+        if (trade.calc_profit_ratio(current_rate) > 0):
             return 'sell'
     
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
@@ -310,6 +312,44 @@ class AIPoweredScalpingStrategy(IStrategy):
         
         return cmo
     
+    def calculate_CCI(self,dataframe,index,diff,ma,p):
+
+        close_array = dataframe['close'].to_numpy()
+        close_array = close_array[:index.name]
+        diff = diff.to_numpy()
+        diff = diff[index.name]
+        ma = ma.to_numpy()
+        ma = ma[index.name]
+
+        if(len(close_array) < p):
+            return 0
+
+        # MAD
+        s = 0
+
+        for i in range(len(close_array),len(close_array)-p,-1):
+            s = s + abs(dataframe['close'][i] - ma)
+        mad = s / p
+
+        # Scalping
+        mcci = np.divide(diff, mad, out=np.zeros_like(diff), where=(mad != 0)) / 0.015
+        return mcci
+
+
+    def minimax(self,volume,x,p,min,max):
+        volume_array = volume.to_numpy()
+        volume_array = volume_array[:x.name+1]
+
+        if(len(volume_array) < p):
+            return 0
+
+        hi = np.nan_to_num(np.max(volume_array[-p+1:]))
+        lo = np.nan_to_num(np.min(volume_array[-p+1:]))
+        if hi == lo or np.isnan(hi) or np.isnan(lo):
+            return np.nan
+        else:
+            return (max - min) * (volume_array[len(volume_array)-1] - lo)/(hi - lo) + min
+    
     # =============================================================
     # ===================== Machine Learning ======================
     # =============================================================
@@ -319,7 +359,7 @@ class AIPoweredScalpingStrategy(IStrategy):
         data_combined.dropna(inplace=True)
 
         X = data_combined[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']]
-        y = np.where(data_combined['output'].shift(1) > 0,1,-1)
+        y = np.where(data_combined['output'] > 0,1,-1)
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=37)
 
@@ -339,6 +379,8 @@ class AIPoweredScalpingStrategy(IStrategy):
 
         # Step 3: Model Training
         model.fit(X_train, y_train)
+        # Step 4: Model Evaluation
+
         return model
     
     def extractFeatures(self,dataframe):
@@ -350,27 +392,39 @@ class AIPoweredScalpingStrategy(IStrategy):
         # Input Source
         source = dataframe_copy['close']
 
+        dataframe_copy['mas'] = ta.SMA(source,timeperiod=LongWindow)
+        dataframe_copy['diffs'] = source - dataframe_copy['mas']
+        dataframe_copy['maf'] = ta.SMA(source,timeperiod=ShortWindow)
+        dataframe_copy['difff'] = source - dataframe_copy['maf']
+
+
         # ============ Long Window ============
         dataframe_copy['rs'] = ta.RSI(source,timeperiod=LongWindow)
+        dataframe_copy['cs'] = dataframe_copy.apply((lambda index: self.calculate_CCI(dataframe_copy,index,dataframe_copy['diffs'],dataframe_copy['mas'],LongWindow)),axis=1)
         dataframe_copy['os'] = ta.ROC(source,timeperiod=LongWindow)
+        dataframe_copy['vs'] = dataframe_copy.apply((lambda x: self.minimax(dataframe_copy['volume'],x,LongWindow,0,99)),axis=1)
         dataframe_copy['cmos'] = self.pine_cmo(source,LongWindow)
         dataframe_copy['emas'] = ta.EMA(dataframe_copy,timeperiod=LongWindow)
 
         # ============ Medium Window ============
         dataframe_copy['rm'] = ta.RSI(source,timeperiod=MediumWindow)
+        dataframe_copy['cm'] = dataframe_copy.apply((lambda index: self.calculate_CCI(dataframe_copy,index,dataframe_copy['diffs'],dataframe_copy['mas'],MediumWindow)),axis=1)
         dataframe_copy['om'] = ta.ROC(source,timeperiod=MediumWindow)
+        dataframe_copy['vm'] = dataframe_copy.apply((lambda x: self.minimax(dataframe_copy['volume'],x,MediumWindow,0,99)),axis=1)
         dataframe_copy['cmom'] = self.pine_cmo(source,MediumWindow)
         dataframe_copy['emam'] = ta.EMA(dataframe_copy,timeperiod=MediumWindow)
 
         # =========== Short window =============
         dataframe_copy['rf'] = ta.RSI(source,timeperiod=ShortWindow)
+        dataframe_copy['cf'] = dataframe_copy.apply((lambda index: self.calculate_CCI(dataframe_copy,index,dataframe_copy['difff'],dataframe_copy['maf'],ShortWindow)),axis=1)
         dataframe_copy['of'] = ta.ROC(source,timeperiod=ShortWindow)
+        dataframe_copy['vf'] = dataframe_copy.apply((lambda x: self.minimax(dataframe_copy['volume'],x,ShortWindow,0,99)),axis=1)
         dataframe_copy['cmof'] = self.pine_cmo(source,ShortWindow)
         dataframe_copy['emaf'] = ta.EMA(dataframe_copy,timeperiod=ShortWindow)
 
-        dataframe_copy['f1'] = dataframe_copy.loc[:,['os','emas','cmos','rs']].mean(axis=1)
-        dataframe_copy['f2'] = dataframe_copy.loc[:,['om','emam','cmom','rm']].mean(axis=1)
-        dataframe_copy['f3'] = dataframe_copy.loc[:,['of','emaf','cmof','rf']].mean(axis=1)
+        dataframe_copy['f1'] = dataframe_copy.loc[:,['os','emas','cmos','rs','maf']].mean(axis=1)
+        dataframe_copy['f2'] = dataframe_copy.loc[:,['om','emam','cmom','rm','cm','vm']].mean(axis=1)
+        dataframe_copy['f3'] = dataframe_copy.loc[:,['of','emaf','cmof','rf','cf','vf']].mean(axis=1)
         dataframe_copy['output'] = dataframe_copy["close"].shift(-1) - dataframe_copy["close"]
 
         min_max_scaler = preprocessing.MinMaxScaler()
@@ -383,17 +437,18 @@ class AIPoweredScalpingStrategy(IStrategy):
 
     def predictSVM(self,dataframe):
         features , output = self.extractFeatures(dataframe)
-        data_for_prediction = dataframe.loc[len(features)-10:].copy()
         data_for_prediction = pd.concat([dataframe], axis=1)
         data_for_prediction.fillna(0,inplace=True)
         
         model = self.trainAndLearnSVM(features,output)
-    
+
         # Step 5: Prediction
-        data_for_prediction['last_10_predicted_value'] = model.predict(data_for_prediction[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']])
-        data_for_prediction['predicted_value'] = data_for_prediction['last_10_predicted_value'] + data_for_prediction['last_10_predicted_value'].shift(-1) + data_for_prediction['last_10_predicted_value'].shift(-2)
-        data_for_prediction['predicted_value'] = data_for_prediction['predicted_value']
-        return data_for_prediction['predicted_value']
+        data_for_prediction['prediction_value_y'] = model.predict(data_for_prediction[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']])
+        data_for_prediction['output'] = np.where(data_for_prediction['output'] > 0,1,-1)
+        accuracy = accuracy_score(data_for_prediction['prediction_value_y'], data_for_prediction['output'])
+        print("=====================", accuracy)
+        data_for_prediction['prediction_value_y'] = data_for_prediction['prediction_value_y']
+        return data_for_prediction['prediction_value_y']
     
     # =============================================================
     # ===================== STC Indicator =========================
