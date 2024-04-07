@@ -1,0 +1,137 @@
+{
+    "max_open_trades": 6,
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",
+    "tradable_balance_ratio": 1,
+    "fiat_display_currency": "USD",
+    "dry_run": true,
+    "dry_run_wallet": 100,
+    "cancel_open_orders_on_exit": false,
+    "trading_mode": "futures",
+    "margin_mode": "isolated",
+    "liquidation_buffer": 0.05,
+    "fee": 0.0002,
+    "unfilledtimeout": {
+        "entry": 10,
+        "exit": 10,
+        "exit_timeout_count": 0,
+        "unit": "minutes"
+    },
+    "entry_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "exchange": {
+        "name": "binance",
+        "key": "D2Ww9DeCDd6UNP9eMUND2Qv9vwJmK8CGeB8GjN0R2ZaCA4G1koUEYE5min5z07OX",
+        "secret": "uIZRZqxgkPUclI2hpRXXyvGFtqbxTv7fGflMSDfmPnGhBuNsCXwu2M6ysAok5Kv9",
+        "_ft_has_params": {
+            "ohlcv_candle_limit": 2000
+        },
+        "ccxt_config": {},
+        "ccxt_async_config": {},
+        "pair_whitelist": [
+            "1000BONK/USDT:USDT",
+            "XRP/USDT:USDT",
+            "ADA/USDT:USDT",
+            "TRX/USDT:USDT",
+            "XLM/USDT:USDT",
+            "ONT/USDT:USDT"
+        ],
+        "pair_blacklist": [
+            "BNB/.*"
+        ]
+    },
+    "freqai": {
+        "enabled": false,
+        "purge_old_models": 2,
+        "fit_live_predictions_candles": 500,
+        "train_period_days": 20,
+        "backtest_period_days": 7,
+        "live_retrain_hours": 0,
+        "identifier": "unique-id-regressor",
+        "feature_parameters": {
+            "include_timeframes": [
+                "5m",
+                "15m",
+                "1h"
+            ],
+            "include_corr_pairlist": [],
+            "label_period_candles": 20,
+            "include_shifted_candles": 3,
+            "DI_threshold": 0.99,
+            "weight_factor": 0.99,
+            "use_DBSCAN_to_remove_outliers": false,
+            "principal_component_analysis": false,
+            "use_SVM_to_remove_outliers": true,
+            "indicator_periods_candles": [
+                5,
+                10,
+                20
+            ],
+            "plot_feature_importances": 0
+        },
+        "data_split_parameters": {
+            "test_size": 0.33,
+            "random_state": 1
+        },
+        "model_training_parameters": {},
+        "rl_config": {
+            "train_cycles": 25,
+            "add_state_info": true,
+            "max_trade_duration_candles": 300,
+            "max_training_drawdown_pct": 0.02,
+            "cpu_count": 6,
+            "model_type": "PPO",
+            "policy_type": "MlpPolicy",
+            "model_reward_parameters": {
+                "rr": 1,
+                "profit_aim": 0.025
+            },
+            "model_kwargs": {
+                "hidden_dim": 512,
+                "dropout_percent": 0.2,
+                "n_layer": 1
+            }
+        }
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList"
+        }
+    ],
+    "telegram": {
+        "enabled": false,
+        "token": "6974410134:AAFhWcG2av2EiIsnqncyXCION5CSrjDOr6s",
+        "chat_id": "2146800175"
+    },
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "127.0.0.1",
+        "listen_port": 8080,
+        "verbosity": "error",
+        "enable_openapi": false,
+        "jwt_secret_key": "78058858b82e3636c84741cc495ace962bf957dea3cd7600d215924cf7ec9741",
+        "ws_token": "aGKct66Qak-aS81qHlVjeal9TghbkEA6fg",
+        "CORS_origins": [],
+        "username": "leolucard",
+        "password": "1234"
+    },
+    "bot_name": "freqtrade",
+    "initial_state": "running",
+    "force_entry_enable": false,
+    "internals": {
+        "process_throttle_secs": 10
+    }
+}

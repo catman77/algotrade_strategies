@@ -1,4 +1,5 @@
 from functools import reduce
+import math
 import numpy as np  # noqa
 import pandas as pd  # noqa
 from pandas import DataFrame
@@ -29,11 +30,15 @@ class AIPoweredScalpingStrategy(IStrategy):
     INTERFACE_VERSION = 3
     can_short: bool = True
     timeframe = '1m'
-    stoploss = -0.05
+    stoploss = -1
+    trailing_stop = False
+    trailing_stop_positive = 0.001
+    trailing_stop_positive_offset = 0.01
+    trailing_only_offset_is_reached = True
     process_only_new_candles = False
     use_exit_signal = True
     exit_profit_only = False
-    startup_candle_count: int = 60
+    startup_candle_count: int = 10
     order_types = {
         'entry': 'market',
         'exit': 'market',
@@ -44,32 +49,25 @@ class AIPoweredScalpingStrategy(IStrategy):
     # =============================================================
     # ===================== STC Scalping Strategy =================
     # =============================================================
-    stc_length_buy = IntParameter(2,50,default=50,space="buy",optimize=True)
-    stc_fastLength_buy = IntParameter(5,50,default=29,space="buy",optimize=True)
-    stc_slowLength_buy = IntParameter(10,80,default=80,space="buy",optimize=True)
-
-    stc_length_sell = IntParameter(2,50,default=50,space="sell",optimize=True)
-    stc_fastLength_sell = IntParameter(5,50,default=29,space="sell",optimize=True)
-    stc_slowLength_sell = IntParameter(10,80,default=80,space="sell",optimize=True)
-
-    Sensitivity_buy = IntParameter(1,5,default=1,space="buy",optimize=True)
-    Atr_period_buy = IntParameter(10,80,default=10,space="buy",optimize=True)
-
-    Sensitivity_sell = IntParameter(1,5,default=1,space="sell",optimize=True)
-    Atr_period_sell = IntParameter(10,80,default=10,space="sell",optimize=True)
+    Sensitivity = 1
+    Atr_period = 10
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe['predicted_value'] = self.predictSVM(dataframe)
-        dataframe['ut_signal_buy'] = self.calculate_ut_bot(dataframe,self.Sensitivity_buy.value,self.Atr_period_buy.value)
-        dataframe['ut_signal_sell'] = self.calculate_ut_bot(dataframe,self.Sensitivity_sell.value,self.Atr_period_sell.value)
-        # dataframe['stc_signal_buy'] = self.calculateSTCIndicator(dataframe,self.stc_length_buy.value,self.stc_fastLength_buy.value,self.stc_slowLength_buy.value)
-        # dataframe['stc_signal_sell'] = self.calculateSTCIndicator(dataframe,self.stc_length_sell.value,self.stc_fastLength_sell.value,self.stc_slowLength_sell.value)
-        print(dataframe.loc[len(dataframe)-20:,['date','predicted_value','ut_signal_buy','close']])
+        a = datetime.now()
+        # dataframe['predicted_value'] = self.predictSVM(dataframe)
+        dataframe['ut_signal'] = self.calculate_ut_bot(dataframe,self.Sensitivity,self.Atr_period)
+        dataframe['trend'] = self.adaptiveTrendFinder(dataframe)
+        dataframe['trend_direction'] = dataframe['trend'].apply(lambda x: x[0])
+        dataframe['trend_period'] = dataframe['trend'].apply(lambda x: x[1])
+        dataframe['trend_strength'] = dataframe['trend'].apply(lambda x: x[2])
+        b = datetime.now()
+        print((b-a).microseconds * 0.001)
+        # print(dataframe.loc[len(dataframe)-10:,['date','trend_direction','ut_signal','close']])
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition = (dataframe['ut_signal_buy'] == 1) & (dataframe['predicted_value'] > 0)
-        sell_condition = (dataframe['ut_signal_sell'] == -1) & (dataframe['predicted_value'] < 0)
+        buy_condition = (dataframe['ut_signal'] == 1) & (dataframe['trend_direction'] > 0)
+        sell_condition = (dataframe['ut_signal'] == -1) & (dataframe['trend_direction'] < 0)
 
         dataframe.loc[
             (
@@ -85,8 +83,8 @@ class AIPoweredScalpingStrategy(IStrategy):
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        buy_condition = (dataframe['ut_signal_buy'] == 1) & (dataframe['predicted_value'] > 0)
-        sell_condition = (dataframe['ut_signal_sell'] == -1) & (dataframe['predicted_value'] < 0)
+        buy_condition = (dataframe['ut_signal'] == 1) & (dataframe['trend_direction'] > 0)
+        sell_condition = (dataframe['ut_signal'] == -1) & (dataframe['trend_direction'] < 0)
 
         dataframe.loc[
             (
@@ -103,49 +101,13 @@ class AIPoweredScalpingStrategy(IStrategy):
     
     # =============================================================
     # ============== Custom Entry and Exit Section ================
-    # =============================================================
-    def confirm_trade_entry(
-        self,
-        pair: str,
-        order_type: str,
-        amount: float,
-        rate: float,
-        time_in_force: str,
-        current_time: datetime,
-        entry_tag,
-        side: str,
-        **kwargs,
-    ) -> bool:
-
-        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
-        is_the_best_time_to_trade = True
-
-        if side == "long" and is_the_best_time_to_trade:              
-            return True
-        elif side == "short" and is_the_best_time_to_trade: 
-            return True
-        
-        return False
-    
+    # =============================================================  
     def custom_exit(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
                     current_profit: float, **kwargs):
-        # dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        # last_candle = dataframe.iloc[-1].squeeze()
-
-        # trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
-        # trade_candle = dataframe.loc[dataframe['date'] == trade_date]
-        # is_the_best_time_to_trade = self.is_quarter_hour(current_time)
-
-        if (trade.calc_profit_ratio(current_rate) > 0):
+        
+        is_best_time = self.is_quarter_hour(current_time)
+        if (trade.calc_profit_ratio(current_rate) >= 0.01) & (is_best_time):
             return 'sell'
-    
-    def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
-                           rate: float, time_in_force: str, exit_reason: str,
-                           current_time: datetime, **kwargs) -> bool:
-        is_the_best_time_to_trade = True
-        if is_the_best_time_to_trade:
-            return True
-
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
@@ -188,71 +150,31 @@ class AIPoweredScalpingStrategy(IStrategy):
                 "required_profit": 0.01
             }
         ]
-
-    # =============================================================
-    # ===================== Helper Function =======================
-    # =============================================================
+    
     def is_quarter_hour(self,time:datetime):
         seconds = time.second
-        # minutes = time.minute
+        minutes = time.minute
         return (0 <= seconds < 3)
-    
-    def get_ticker_indicator(self):
-        return int(self.timeframe[:-1])
-    
-    def calculateBigTimeTrame(self,dataframe,minutes):
-        big_timeframe = resample_to_interval(dataframe, self.get_ticker_indicator() * minutes)
-        dataframe = resampled_merge(dataframe, big_timeframe)
-        return dataframe
     
     # =============================================================
     # ===================== Machine Learning Helper ===============
     # =============================================================
-
-    def convertBigTimeToNormal(self,data:DataFrame):
-        columns = {
-            "resample_5_open" : "open",
-            "resample_5_high" : "high",
-            "resample_5_low" : "low",
-            "resample_5_close" : "close",
-            "resample_5_volume" : "volume"
-        }
-        data = data.rename(columns=columns)
-        return data
-
-    def convertNormalToBigTime(self,data:DataFrame):
-        columns = {
-            "open" : "resample_5_open",
-            "high" : "resample_5_high",
-            "low" : "resample_5_low",
-            "close" : "resample_5_close",
-            "volume" : "resample_5_volume"
-        }
-        data = data.rename(columns=columns)
-        return data
-
     def calculate_CCI(self,dataframe,index,diff,ma,p):
-
         close_array = dataframe['close'].to_numpy()
         close_array = close_array[:index.name]
         diff = diff.to_numpy()
         diff = diff[index.name]
         ma = ma.to_numpy()
         ma = ma[index.name]
-
         if(len(close_array) < p):
             return 0
-
         # MAD
         s = 0
-
         for i in range(len(close_array),len(close_array)-p,-1):
             s = s + abs(dataframe['close'][i] - ma)
         mad = s / p
-
         # Scalping
         mcci = diff/mad/0.015
-        
         return mcci
 
 
@@ -361,7 +283,7 @@ class AIPoweredScalpingStrategy(IStrategy):
         X = data_combined[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']]
         y = np.where(data_combined['output'] > 0,1,-1)
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=37)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=37)
 
         # Step 2: Model Selection
         knn_model = KNeighborsClassifier(n_neighbors=1)
@@ -437,17 +359,12 @@ class AIPoweredScalpingStrategy(IStrategy):
 
     def predictSVM(self,dataframe):
         features , output = self.extractFeatures(dataframe)
-        data_for_prediction = pd.concat([dataframe], axis=1)
-        data_for_prediction.fillna(0,inplace=True)
-        
         model = self.trainAndLearnSVM(features,output)
 
         # Step 5: Prediction
+        data_for_prediction = pd.concat([dataframe], axis=1)
+        data_for_prediction.fillna(0,inplace=True)
         data_for_prediction['prediction_value_y'] = model.predict(data_for_prediction[['f1_slow_normalize','f2_medium_normalize','f3_fast_normalize']])
-        data_for_prediction['output'] = np.where(data_for_prediction['output'] > 0,1,-1)
-        accuracy = accuracy_score(data_for_prediction['prediction_value_y'], data_for_prediction['output'])
-        print("=====================", accuracy)
-        data_for_prediction['prediction_value_y'] = data_for_prediction['prediction_value_y']
         return data_for_prediction['prediction_value_y']
     
     # =============================================================
@@ -504,22 +421,6 @@ class AIPoweredScalpingStrategy(IStrategy):
             ),
             'stc_signal'] = -1
         
-        dataframe.loc[
-            (
-                (dataframe['stc_signal'] == 1)
-                &
-                (dataframe['stc_signal'].shift(1) == -1)
-            ),
-            'stc_entry_exit'] = 1
-        
-        dataframe.loc[
-            (
-                (dataframe['stc_signal'] == -1)
-                &
-                (dataframe['stc_signal'].shift(1) == 1)
-            ),
-            'stc_entry_exit'] = -1
-        
         return dataframe['stc_signal']
     
     # =============================================================
@@ -574,15 +475,9 @@ class AIPoweredScalpingStrategy(IStrategy):
         SENSITIVITY = SENSITIVITY
         ATR_PERIOD = ATR_PERIOD
 
-        # dataframe = self.heikinashi(dataframe)
-
         # Compute ATR And nLoss variable
         dataframe["xATR"] = ta.ATR(dataframe["high"], dataframe["low"], dataframe["close"], timeperiod=ATR_PERIOD)
         dataframe["nLoss"] = SENSITIVITY * dataframe["xATR"]
-
-        #Drop all rows that have nan, X first depending on the ATR preiod for the moving average
-        # dataframe = dataframe.dropna()
-        # dataframe = dataframe.reset_index()
 
         dataframe["ATRTrailingStop"] = [0.0] + [np.nan for i in range(len(dataframe) - 1)]
 
@@ -619,3 +514,212 @@ class AIPoweredScalpingStrategy(IStrategy):
 
     def calculate_crossover(self,source1,source2):
         return (source1 > source2) & (source1.shift(1) <= source2.shift(1))
+    
+
+    # =============================================================
+    # ============== Adaptive Trend Finder ========================
+    # =============================================================
+    periods = np.array([0,15,20,25,30])
+
+    def adaptiveTrendFinder(self,dataframe:DataFrame):
+        dataframe['trend_direction'] = dataframe.apply((lambda x: self.calculate_trend_direction(x,dataframe)),axis=1)
+        return dataframe['trend_direction']
+    
+    def calculate_trend_direction(self,x,dataframe):
+        if(x.name != len(dataframe)-1):
+            return (0,0,0)
+
+        devMultiplier = 2.0
+        # Calculate Deviation,PersionR,Slope,Intercept
+        stdDev01, pearsonR01, slope01, intercept01 = self.calcDev(self.periods[1],dataframe)
+        stdDev02, pearsonR02, slope02, intercept02 = self.calcDev(self.periods[2],dataframe)
+        stdDev03, pearsonR03, slope03, intercept03 = self.calcDev(self.periods[3],dataframe)
+        # stdDev04, pearsonR04, slope04, intercept04 = self.calcDev(self.periods[4],dataframe)
+        # stdDev05, pearsonR05, slope05, intercept05 = self.calcDev(self.periods[5],dataframe)
+        # stdDev06, pearsonR06, slope06, intercept06 = self.calcDev(self.periods[6],dataframe)
+        # stdDev07, pearsonR07, slope07, intercept07 = self.calcDev(self.periods[7],dataframe)
+        # stdDev08, pearsonR08, slope08, intercept08 = self.calcDev(self.periods[8],dataframe)
+        # stdDev09, pearsonR09, slope09, intercept09 = self.calcDev(self.periods[9],dataframe)
+        # stdDev10, pearsonR10, slope10, intercept10 = self.calcDev(self.periods[10],dataframe)
+        # stdDev11, pearsonR11, slope11, intercept11 = self.calcDev(self.periods[11],dataframe)
+        # stdDev12, pearsonR12, slope12, intercept12 = self.calcDev(self.periods[12],dataframe)
+        # stdDev13, pearsonR13, slope13, intercept13 = self.calcDev(self.periods[13],dataframe)
+        # stdDev14, pearsonR14, slope14, intercept14 = self.calcDev(self.periods[14],dataframe)
+        # stdDev15, pearsonR15, slope15, intercept15 = self.calcDev(self.periods[15],dataframe)
+        # stdDev16, pearsonR16, slope16, intercept16 = self.calcDev(self.periods[16],dataframe)
+        # stdDev17, pearsonR17, slope17, intercept17 = self.calcDev(self.periods[17],dataframe)
+        # stdDev18, pearsonR18, slope18, intercept18 = self.calcDev(self.periods[18],dataframe)
+        # stdDev19, pearsonR19, slope19, intercept19 = self.calcDev(self.periods[19],dataframe)
+
+        # Find the highest Pearson's R
+        # float highestPearsonR = pearsonR01
+        highestPearsonR = max(pearsonR01, pearsonR02,pearsonR03,
+                            #   pearsonR03, pearsonR04, pearsonR05, pearsonR06, pearsonR07, pearsonR08,
+                            #    pearsonR09, pearsonR10, pearsonR11, pearsonR12, pearsonR13, pearsonR14, pearsonR15, pearsonR16, pearsonR17, pearsonR18, pearsonR19
+                               )
+
+        # Determine selected length, slope, intercept, and deviations
+        detectedPeriod  = 0
+        detectedSlope   = 0
+        detectedIntrcpt = 0
+        detectedStdDev  = 0
+
+        if highestPearsonR == pearsonR01:
+            detectedPeriod = self.periods[1]
+            detectedSlope = slope01
+            detectedIntrcpt = intercept01
+            detectedStdDev = stdDev01
+        elif highestPearsonR == pearsonR02:
+            detectedPeriod = self.periods[2] 
+            detectedSlope = slope02
+            detectedIntrcpt = intercept02
+            detectedStdDev = stdDev02
+        elif highestPearsonR == pearsonR03:
+            detectedPeriod = self.periods[3]  
+            detectedSlope = slope03
+            detectedIntrcpt = intercept03
+            detectedStdDev = stdDev03
+        # elif highestPearsonR == pearsonR04:
+        #     detectedPeriod = self.periods[4]  
+        #     detectedSlope = slope04
+        #     detectedIntrcpt = intercept04
+        #     detectedStdDev = stdDev04
+        # elif highestPearsonR == pearsonR05:
+        #     detectedPeriod = self.periods[5]  
+        #     detectedSlope = slope05
+        #     detectedIntrcpt = intercept05
+        #     detectedStdDev = stdDev05
+        # elif highestPearsonR == pearsonR06:
+        #     detectedPeriod = self.periods[6]       
+        #     detectedSlope = slope06
+        #     detectedIntrcpt = intercept06
+        #     detectedStdDev = stdDev06
+        # elif highestPearsonR == pearsonR07:
+        #     detectedPeriod = self.periods[7]      
+        #     detectedSlope = slope07
+        #     detectedIntrcpt = intercept07
+        #     detectedStdDev = stdDev07
+        # elif highestPearsonR == pearsonR08:
+        #     detectedPeriod = self.periods[8]       
+        #     detectedSlope = slope08
+        #     detectedIntrcpt = intercept08
+        #     detectedStdDev = stdDev08
+        # elif highestPearsonR == pearsonR09:
+        #     detectedPeriod = self.periods[9]       
+        #     detectedSlope = slope09
+        #     detectedIntrcpt = intercept09
+        #     detectedStdDev = stdDev09
+        # elif highestPearsonR == pearsonR10:
+        #     detectedPeriod = self.periods[10]
+        #     detectedSlope = slope10
+        #     detectedIntrcpt = intercept10
+        #     detectedStdDev = stdDev10
+        # elif highestPearsonR == pearsonR11:
+        #     detectedPeriod = self.periods[11]
+        #     detectedSlope = slope11
+        #     detectedIntrcpt = intercept11
+        #     detectedStdDev = stdDev11
+        # elif highestPearsonR == pearsonR12:
+        #     detectedPeriod = self.periods[12]
+        #     detectedSlope = slope12
+        #     detectedIntrcpt = intercept12
+        #     detectedStdDev = stdDev12
+        # elif highestPearsonR == pearsonR13:
+        #     detectedPeriod = self.periods[13]
+        #     detectedSlope = slope13
+        #     detectedIntrcpt = intercept13
+        #     detectedStdDev = stdDev13
+        # elif highestPearsonR == pearsonR14:
+        #     detectedPeriod = self.periods[14]
+        #     detectedSlope = slope14
+        #     detectedIntrcpt = intercept14
+        #     detectedStdDev = stdDev14
+        # elif highestPearsonR == pearsonR15:
+        #     detectedPeriod = self.periods[15]
+        #     detectedSlope = slope15
+        #     detectedIntrcpt = intercept15
+        #     detectedStdDev = stdDev15
+        # elif highestPearsonR == pearsonR16:
+        #     detectedPeriod = self.periods[16]
+        #     detectedSlope = slope16
+        #     detectedIntrcpt = intercept16
+        #     detectedStdDev = stdDev16
+        # elif highestPearsonR == pearsonR17:
+        #     detectedPeriod = self.periods[17]
+        #     detectedSlope = slope17
+        #     detectedIntrcpt = intercept17
+        #     detectedStdDev = stdDev17
+        # elif highestPearsonR == pearsonR18:
+        #     detectedPeriod = self.periods[18]
+        #     detectedSlope = slope18
+        #     detectedIntrcpt = intercept18
+        #     detectedStdDev = stdDev18
+        # elif highestPearsonR == pearsonR19:
+        #     detectedPeriod = self.periods[19]
+        #     detectedSlope = slope19
+        #     detectedIntrcpt = intercept19
+        #     detectedStdDev = stdDev19
+        else:
+            # Default case
+            raise Exception("Cannot Find Highest PearsonR") 
+        
+        # Calculate start and end price based on detected slope and intercept
+        startPrice = math.exp(detectedIntrcpt + detectedSlope * (detectedPeriod - 1))
+        endPrice = math.exp(detectedIntrcpt)
+        startAtBar = len(dataframe) - detectedPeriod + 1
+
+        # Calculate Upper Upper Price and Upper End price
+        upperStartPrice = startPrice * math.exp(devMultiplier * detectedStdDev)
+        upperEndPrice   =   endPrice * math.exp(devMultiplier * detectedStdDev)
+
+        # Calculate Lower Price and Lower End Price
+        lowerStartPrice = startPrice / math.exp(devMultiplier * detectedStdDev)
+        lowerEndPrice =   endPrice / math.exp(devMultiplier * detectedStdDev)
+
+        # Calculate If Uptrend or Downtrend and how strength is this trend
+        # Also Know how many this trend exist with period
+        # ====== Strategies ======
+        # If EndPrice > StartPrice Uptrend
+        # If EndPrice < StartPrice Downtrend
+        trend_direction = endPrice - startPrice
+        return (trend_direction,detectedPeriod,highestPearsonR)
+    
+    def calcDev(self,length:int,dataframe:DataFrame):
+        logSource = dataframe['close'].apply(lambda x: math.log(x))
+        period_1 = length -1
+        sumX = 0.0
+        sumXX = 0.0
+        sumYX = 0.0
+        sumY = 0.0
+        for i in range(1,length+1):
+            lSrc = logSource[len(dataframe)-i]
+            sumX += i
+            sumXX += i * i
+            sumYX += i * lSrc
+            sumY += lSrc
+
+        slope = np.nan_to_num((length * sumYX - sumX * sumY) / (length * sumXX - sumX * sumX))
+        average = sumY / length
+        intercept = average - (slope * sumX / length) + slope
+        sumDev = 0.0
+        sumDxx = 0.0
+        sumDyy = 0.0
+        sumDyx = 0.0
+        regres = intercept + slope * period_1 * 0.5
+        sumSlp = intercept
+
+        for i in range(1,period_1+1):
+            lSrc = logSource[len(dataframe)-i]
+            dxt = lSrc - average
+            dyt  = sumSlp - regres
+            lSrc   -= sumSlp
+            sumSlp += slope
+            sumDxx +=  dxt * dxt
+            sumDyy +=  dyt * dyt
+            sumDyx +=  dxt * dyt
+            sumDev += lSrc * lSrc
+
+        unStdDev = math.sqrt(sumDev / period_1)
+        divisor  = sumDxx * sumDyy
+        pearsonR = np.nan_to_num(sumDyx / math.sqrt(divisor))
+        return unStdDev,pearsonR,slope,intercept
